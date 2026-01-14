@@ -1,19 +1,17 @@
-# 🎈 Blank app template
+# AI Impact Report Demo (Streamlit)
 
-A simple Streamlit app template for you to modify!
+## Run locally
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://blank-app-template.streamlit.app/)
+## What it does
+- Single-screen demo that generates an "AI Impact Report" for VAT change (restaurants/catering).
+- Uses a transparent scenario model (formulas) + editable Real Data Pack in `data.json`.
+- Exports a DOCX report.
 
-### How to run it on your own machine
-
-1. Install the requirements
-
-   ```
-   $ pip install -r requirements.txt
-   ```
-
-2. Run the app
-
-   ```
-   $ streamlit run streamlit_app.py
-   ```
+## Customize
+- Edit `data.json`:
+  - `turnover_sector_I_bgn` and `employment_sector_I` with latest NSI numbers
+  - scenario presets (Optimistic/Base/Pessimistic)

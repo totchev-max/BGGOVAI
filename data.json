@@ -1,0 +1,41 @@
+{
+  "version": "0.1-demo",
+  "country": "Bulgaria",
+  "policy_module": "VAT_restaurants_catering",
+  "public_data_notes": [
+    "Replace with latest NSI turnover and employment for Sector I (Accommodation and food service activities).",
+    "This demo uses a transparent scenario model; AI text is optional."
+  ],
+  "inputs_defaults": {
+    "vat_from": 0.09,
+    "vat_to": 0.2,
+    "share_restaurants_in_sector_I": 0.75,
+    "passthrough": 0.7,
+    "price_elasticity": -0.6,
+    "compliance_change": 0.0
+  },
+  "real_data": {
+    "turnover_sector_I_bgn": 4623114000,
+    "employment_sector_I": 146500
+  },
+  "scenario_presets": {
+    "Optimistic": {
+      "share": 0.8,
+      "passthrough": 0.5,
+      "elasticity": -0.3,
+      "compliance": 0.05
+    },
+    "Base": {
+      "share": 0.75,
+      "passthrough": 0.7,
+      "elasticity": -0.6,
+      "compliance": 0.0
+    },
+    "Pessimistic": {
+      "share": 0.7,
+      "passthrough": 1.0,
+      "elasticity": -0.9,
+      "compliance": -0.03
+    }
+  }
+}
