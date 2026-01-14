@@ -3,7 +3,6 @@ import json
 from io import BytesIO
 from pathlib import Path
 import streamlit as st
-
 from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
