@@ -173,11 +173,11 @@ st.markdown(
 # (Realistic-ish, but fictive, simplified)
 # =========================================
 def get_demo_budget():
-    inputs = {
-        "GDP (bn BGN)": 210.0,
-        "Debt stock (bn BGN)": 58.0,
-        "AIC (EU=100) - Bulgaria": 70.0,
-        "AIC (EU=100) - EU average": 100.0,
+    inp = {
+        "gdp": 210.0,
+        "debt": 58.0,
+        "aic_bg": 70.0,
+        "aic_eu": 100.0,
     }
 
     revenues = [
@@ -204,7 +204,7 @@ def get_demo_budget():
 
     rev_df = pd.DataFrame(revenues, columns=["Category", "Amount (bn BGN)", "Notes"])
     exp_df = pd.DataFrame(expenditures, columns=["Category", "Amount (bn BGN)", "Notes"])
-    return inputs, rev_df, exp_df
+    return inp, rev_df, exp_df
 
 
 # =========================================
