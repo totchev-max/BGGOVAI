@@ -20,46 +20,25 @@ st.set_page_config(
 # =========================================
 @st.cache_resource
 def get_openai_client():
-    """
-    Returns an OpenAI client if OPENAI_API_KEY is set in Streamlit Secrets.
-    Works with openai>=1.0.0.
-    """
     try:
         api_key = st.secrets.get("OPENAI_API_KEY", None)
     except Exception:
         api_key = None
-
     if not api_key:
         return None
-
-    try:
-        from openai import OpenAI  # openai>=1.0.0
-        return OpenAI(api_key=api_key)
-    except Exception:
-        return None
+    from openai import OpenAI  # openai>=1.0.0
+    return OpenAI(api_key=api_key)
 
 
 def ask_ai(system: str, context: str) -> str:
-    """
-    Calls OpenAI chat.completions via the new SDK.
-    Returns a readable error instead of crashing.
-    """
     client = get_openai_client()
     if client is None:
         return (
             "⚠️ AI не е активен.\n\n"
-            "Провери:\n"
-            "1) Streamlit → Manage app → Settings → Secrets\n"
-            "   OPENAI_API_KEY = \"sk-...\"\n"
-            "2) requirements.txt да има: openai>=1.0.0\n"
+            "Провери Secrets:\n"
+            "OPENAI_API_KEY = \"sk-...\""
         )
-
-    model = None
-    try:
-        model = st.secrets.get("OPENAI_MODEL", "gpt-4o-mini")
-    except Exception:
-        model = "gpt-4o-mini"
-
+    model = st.secrets.get("OPENAI_MODEL", "gpt-4o-mini")
     try:
         resp = client.chat.completions.create(
             model=model,
@@ -71,14 +50,7 @@ def ask_ai(system: str, context: str) -> str:
         )
         return resp.choices[0].message.content or ""
     except Exception as e:
-        return (
-            "❌ AI повикването не мина.\n\n"
-            "Най-честите причини:\n"
-            "• Грешен/невалиден ключ\n"
-            "• Моделът в OPENAI_MODEL не е достъпен\n"
-            "• Временен проблем/лимит\n\n"
-            f"Технически детайл: {e}"
-        )
+        return f"❌ AI повикването не мина.\n\nТехнически детайл: {e}"
 
 
 # =========================================
@@ -171,6 +143,10 @@ st.markdown(
         margin-right: 6px;
         margin-bottom: 6px;
       }}
+      .muted {{
+        color: rgba(0,0,0,0.60);
+        font-size: 12px;
+      }}
     </style>
 
     <div class="gov-header">
@@ -186,7 +162,6 @@ st.markdown(
 
     <div class="disclaimer">
       <b>Внимание:</b> Това е <b>демо прототип</b>. Не е официален държавен портал и не представлява правен/финансов съвет.
-      Използваното лого е <b>стилизиран DEMO символ</b>.
     </div>
     """,
     unsafe_allow_html=True,
@@ -194,7 +169,46 @@ st.markdown(
 
 
 # =========================================
-# Supported topics (validated demo prompts)
+# DEMO baseline budget (embedded)
+# (Realistic-ish, but fictive, simplified)
+# =========================================
+def get_demo_budget():
+    inputs = {
+        "GDP (bn BGN)": 210.0,
+        "Debt stock (bn BGN)": 58.0,
+        "AIC (EU=100) - Bulgaria": 70.0,
+        "AIC (EU=100) - EU average": 100.0,
+    }
+
+    revenues = [
+        ("VAT (total)", 22.0, "вкл. ставка ресторанти (условно)"),
+        ("Income tax", 10.0, ""),
+        ("Corporate tax", 4.0, ""),
+        ("Social contributions", 22.0, ""),
+        ("Excises", 6.0, ""),
+        ("EU funds & grants", 10.0, ""),
+        ("Other revenues", 18.0, ""),
+    ]
+
+    expenditures = [
+        ("Pensions", 20.0, ""),
+        ("Wages (public sector)", 18.0, ""),
+        ("Healthcare", 10.0, ""),
+        ("Education", 8.0, ""),
+        ("Capex (public investment)", 9.0, ""),
+        ("Social programs (other)", 8.0, ""),
+        ("Defense & security", 6.0, ""),
+        ("Interest", 2.0, ""),
+        ("Other expenditures", 17.0, ""),
+    ]
+
+    rev_df = pd.DataFrame(revenues, columns=["Category", "Amount (bn BGN)", "Notes"])
+    exp_df = pd.DataFrame(expenditures, columns=["Category", "Amount (bn BGN)", "Notes"])
+    return inputs, rev_df, exp_df
+
+
+# =========================================
+# Supported topics
 # =========================================
 SUPPORTED = [
     "ДДС 9% за ресторанти (въздействие върху бюджета)",
@@ -210,21 +224,23 @@ st.markdown(" ".join([f'<span class="chip">{s}</span>' for s in SUPPORTED]), uns
 
 
 # =========================================
-# UI: question + Excel upload
+# UI: question + optional Excel upload
 # =========================================
 st.markdown("### Въпрос към системата")
 q = st.text_area(
-    "Въведи въпрос (за фискални въпроси прикачи Excel бюджета):",
+    "Въведи въпрос (можеш и без Excel — ще ползвам вграден DEMO бюджет):",
     height=90,
-    placeholder="Пример: Какво става ако върнем ДДС 9% за ресторанти? Какъв е ефектът върху дефицита и целите?",
+    placeholder="Пример: Какво става ако върнем ДДС 9% за ресторанти?",
 )
 
-uploaded = st.file_uploader("Качи Excel бюджет (.xlsx)", type=["xlsx"])
+uploaded = st.file_uploader("По желание: Качи Excel бюджет (.xlsx)", type=["xlsx"])
 
+with st.expander("Как работи демото без Excel?"):
+    st.write(
+        "Ако не качиш файл, системата използва вграден опростен базов бюджет (DEMO), "
+        "за да демонстрира логиката на анализ и целите (3% дефицит, 60% дълг, AIC догонване, без данъци)."
+    )
 
-# =========================================
-# Goals (fixed by you)
-# =========================================
 GOALS_TEXT = """\
 Цели (демо):
 - Дефицит ≤ 3% от БВП
@@ -283,21 +299,21 @@ def answer_admin_mol():
 3) След вписване: уведомяваш банка/контрагенти, актуализираш договори при нужда
 """
     )
-    st.caption("Бележка: демо ориентир. Реалният пакет документи зависи от казуса и изискванията за заверки.")
+    st.caption("Бележка: демо ориентир. Реалният пакет документи зависи от казуса.")
 
 
 def answer_legal_citizenship():
     st.subheader("Право: Закон за българското гражданство — DEMO рамка за анализ")
     st.markdown(
         """
-**Как да оцениш предложение за промяна (структура):**
-1) **Точен обхват**: кои текстове (чл./ал./§) се променят и как  
-2) **Конституционност / съответствие**: Конституция, международни ангажименти, правова държава  
-3) **Процедури и изпълнимост**: срокове, доказване, натоварване на администрацията, контрол  
-4) **Рискове**: неясни дефиниции, обжалвания, конфликт на норми, преходни режими  
-5) **Минимизиране на риска**: ясни дефиниции, преходни правила, подзаконови актове, ИТ/регистри
+**Структура за оценка на промяна:**
+1) Точен обхват: кои текстове (чл./ал./§) се променят и как  
+2) Конституционност/съответствие: Конституция, международни ангажименти  
+3) Процедури и изпълнимост: срокове, доказване, капацитет, контрол  
+4) Рискове: неясни дефиниции, обжалвания, конфликт на норми  
+5) Минимизиране: ясни дефиниции, преходни правила, подзаконови актове, ИТ/регистри
 
-За точен анализ: постави текста на конкретните предложения (чл./ал./§) и ще маркирам последствия/рискове.
+За точен анализ: постави текста на предложенията (чл./ал./§).
 """
     )
 
@@ -370,40 +386,39 @@ intent = classify(q)
 
 
 # =========================================
-# Fiscal branch: requires Excel
+# Fiscal compute: Excel if present, else DEMO budget
 # =========================================
-if intent.startswith("FISCAL"):
-    if not uploaded:
-        st.warning("За финансовите въпроси първо качи Excel бюджета (.xlsx).")
-        st.stop()
-
-    wb = load_workbook(filename=BytesIO(uploaded.getvalue()), data_only=True)
+def load_budget_from_excel(uploaded_file):
+    wb = load_workbook(filename=BytesIO(uploaded_file.getvalue()), data_only=True)
     need = {"Inputs", "Revenues", "Expenditures"}
     if not need.issubset(set(wb.sheetnames)):
-        st.error("Липсват нужни листове. Нужни са: Inputs, Revenues, Expenditures.")
-        st.stop()
+        raise ValueError("Липсват нужни листове: Inputs, Revenues, Expenditures.")
 
     inp = parse_inputs(list(wb["Inputs"].values))
+    rev_df = table_to_df(list(wb["Revenues"].values), total_keyword="TOTAL")
+    exp_df = table_to_df(list(wb["Expenditures"].values), total_keyword="TOTAL")
+    return inp, rev_df, exp_df
+
+
+def compute_and_render_fiscal(intent_code: str, source_label: str, inp, rev_df, exp_df):
+    goal_def = 0.03
+    goal_debt = 0.60
+
     gdp = inp["gdp"]
     debt = inp["debt"]
     aic_bg = inp["aic_bg"]
     aic_eu = inp["aic_eu"]
 
-    rev_df = table_to_df(list(wb["Revenues"].values), total_keyword="TOTAL")
-    exp_df = table_to_df(list(wb["Expenditures"].values), total_keyword="TOTAL")
-
-    goal_def = 0.03
-    goal_debt = 0.60
-
-    # Demo scenario deltas (fictive, simplified)
     note = "DEMO: общ фискален преглед (без промяна)."
-    if intent == "FISCAL_VAT_REST":
+
+    # Simple, controlled scenario changes (demo)
+    if intent_code == "FISCAL_VAT_REST":
         rev_df.loc[rev_df["Category"] == "VAT (total)", "Amount (bn BGN)"] -= 0.6
         note = "DEMO сценарий: ДДС 9% за ресторанти → -0.6 млрд. лв. от общ ДДС (условно)."
-    elif intent == "FISCAL_PENSIONS":
+    elif intent_code == "FISCAL_PENSIONS":
         exp_df.loc[exp_df["Category"] == "Pensions", "Amount (bn BGN)"] *= 1.10
         note = "DEMO сценарий: +10% пенсии → увеличение на разхода (условно)."
-    elif intent == "FISCAL_INVEST":
+    elif intent_code == "FISCAL_INVEST":
         exp_df.loc[exp_df["Category"] == "Capex (public investment)", "Amount (bn BGN)"] += 1.0
         exp_df.loc[exp_df["Category"].isin(["Education", "Healthcare"]), "Amount (bn BGN)"] += 0.3
         note = "DEMO сценарий: инвестиции → +1.0 млрд капекс и +0.3 млрд образование/здраве (условно)."
@@ -416,6 +431,8 @@ if intent.startswith("FISCAL"):
     debt_pct = (debt / gdp) if (gdp and debt is not None) else None
 
     st.subheader("Финансов резултат (DEMO)")
+    st.caption(f"Източник на бюджет: **{source_label}**")
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Приходи", f"{total_rev:.1f} млрд. лв.")
     c2.metric("Разходи", f"{total_exp:.1f} млрд. лв.")
@@ -430,7 +447,8 @@ if intent.startswith("FISCAL"):
     if aic_bg is not None and aic_eu is not None:
         gap = max(aic_eu - aic_bg, 0.0)
     st.caption(
-        f"AIC (DEMO): BG={aic_bg:.1f}, EU={aic_eu:.1f}, gap={gap:.1f} пункта" if gap is not None else "AIC (DEMO): n/a"
+        f"AIC (DEMO): BG={aic_bg:.1f}, EU={aic_eu:.1f}, gap={gap:.1f} пункта"
+        if gap is not None else "AIC (DEMO): n/a"
     )
 
     st.divider()
@@ -442,7 +460,7 @@ if intent.startswith("FISCAL"):
         st.subheader("Разходи (след сценария)")
         st.dataframe(exp_df, use_container_width=True, hide_index=True)
 
-    # ---- Real-time AI analysis
+    # AI analysis
     system = f"""
 Ти си BGGovAI — аналитичен съветник за публични политики на България.
 
@@ -454,31 +472,44 @@ if intent.startswith("FISCAL"):
 - Покажи trade-offs и как се спазват целите.
 - Не измисляй данни, които не са дадени.
 """
-
     context = f"""
 Въпрос от потребителя:
 {q}
 
-Ключови индикатори (от Excel демо модела):
+Бюджетен източник: {source_label}
+
+Ключови индикатори:
 - Приходи: {total_rev:.1f} млрд. лв.
 - Разходи: {total_exp:.1f} млрд. лв.
 - Дефицит: {deficit:.1f} млрд. лв.
 - Дефицит (% БВП): {(deficit_pct*100):.2f}% (цел ≤ 3%)
-- Дълг (% БВП): {(debt_pct*100):.2f}% (цел ≤ 60%)  (ако има данни)
+- Дълг (% БВП): {(debt_pct*100):.2f}% (цел ≤ 60%) (ако има данни)
 - AIC BG: {aic_bg:.1f} / AIC EU: {aic_eu:.1f} / Gap: {gap:.1f}
 
 Политическо ограничение: без повишение на данъците.
 """
-
     st.divider()
     st.subheader("AI анализ (real-time)")
     st.write(ask_ai(system, context))
-    st.caption("По желание можеш да зададеш модел в Secrets: OPENAI_MODEL=\"gpt-4o-mini\"")
 
 
 # =========================================
-# Admin / Legal branches + AI add-on
+# Routing
 # =========================================
+if intent.startswith("FISCAL"):
+    if uploaded:
+        try:
+            inp, rev_df, exp_df = load_budget_from_excel(uploaded)
+            compute_and_render_fiscal(intent, "Качен Excel файл", inp, rev_df, exp_df)
+        except Exception as e:
+            st.error(f"Excel бюджетът не може да се прочете: {e}")
+            st.info("Ще използвам вградения DEMO бюджет вместо това.")
+            inp, rev_df, exp_df = get_demo_budget()
+            compute_and_render_fiscal(intent, "Вграден DEMO бюджет (fallback)", inp, rev_df, exp_df)
+    else:
+        inp, rev_df, exp_df = get_demo_budget()
+        compute_and_render_fiscal(intent, "Вграден DEMO бюджет", inp, rev_df, exp_df)
+
 elif intent == "ADMIN_MOL":
     answer_admin_mol()
     st.divider()
@@ -502,7 +533,7 @@ else:
 {GOALS_TEXT}
 
 Ограничения:
-- Ако въпросът е фискален и няма Excel — кажи, че липсва бюджет.
+- Ако въпросът е фискален и няма Excel — използвай вградения DEMO бюджет (както е в системата).
 - Ако темата е извън демото — кажи какви данни трябват.
 - Не измисляй факти.
 """
