@@ -6,7 +6,7 @@ from openai import OpenAI
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(page_title="BGGOVAI интелигентен съветник (DEMO)", layout="wide")
+st.set_page_config(page_title="Моят ИИ съветник — BGGOVAI (DEMO)", layout="wide")
 
 BGN_PER_EUR = 1.95583
 
@@ -19,10 +19,6 @@ def fmt_bn_eur(x: float) -> str:
     return f"{x:.2f} млрд. €"
 
 
-def pct(x: float) -> str:
-    return f"{x * 100:.0f}%"
-
-
 # =========================
 # PREMIUM UI (CSS)
 # =========================
@@ -32,8 +28,6 @@ st.markdown(
 :root{
   --text: rgba(255,255,255,0.92);
   --muted: rgba(255,255,255,0.70);
-  --card: rgba(255,255,255,0.06);
-  --border: rgba(255,255,255,0.12);
 }
 .stApp {
   background:
@@ -121,13 +115,14 @@ textarea::placeholder { color: rgba(255,255,255,0.45) !important; }
   font-size: 13px;
   margin-bottom: 10px;
 }
+[data-testid="stDataFrame"] { border-radius: 16px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12); }
 </style>
 """,
     unsafe_allow_html=True,
 )
 
 # =========================
-# TAX PARAMS (kept in program, hidden from UI)
+# ДАНЪЧНИ ПАРАМЕТРИ (скрити от UI, но в програмата)
 # =========================
 TAX = {
     "VAT_standard": 0.20,
@@ -140,10 +135,10 @@ TAX = {
 }
 
 # =========================
-# OFFICIAL SOURCES (BG + EU) allow-list
+# ОФИЦИАЛНИ ИЗТОЧНИЦИ (BG + EU) allow-list
 # =========================
 OFFICIAL_BG_EU_DOMAINS = [
-    # Bulgaria
+    # България
     "parliament.bg", "dv.parliament.bg", "strategy.bg",
     "government.bg", "council.bg", "egov.bg", "portal.egov.bg",
     "minfin.bg", "mlsp.government.bg", "mh.government.bg", "mon.bg",
@@ -154,20 +149,21 @@ OFFICIAL_BG_EU_DOMAINS = [
     "ascc.bg", "kewr.bg", "kzp.bg", "kzld.bg", "cpdp.bg", "fsc.bg",
     "registryagency.bg", "brra.bg", "grao.bg", "customs.bg",
     "justice.government.bg", "vks.bg", "vss.justice.bg", "court.bg", "prokuratura.bg",
-    # EU / official intl
+    # ЕС/официални
     "europa.eu", "eur-lex.europa.eu", "ec.europa.eu", "eurostat.ec.europa.eu",
     "consilium.europa.eu", "europarl.europa.eu", "ecb.europa.eu",
-    "esm.europa.eu", "eib.org", "eurofound.europa.eu",
+    "esm.europa.eu", "eib.org",
+    # международни институции (официални)
     "oecd.org", "imf.org", "worldbank.org"
 ]
 
 # =========================
-# MASTER PROMPT (p1)
+# MASTER PROMPT (универсален, без "министър")
 # =========================
 P1 = """
-Ти си BGGOVAI — интелигентен институционален ИИ съветник на Република България.
+Ти си BGGOVAI — Моят ИИ съветник за публични политики и административно-правни теми в България (DEMO).
 
-Цели на държавната политика:
+Цели (когато темата е фискална/бюджетна):
 - Дефицит ≤ 3% от БВП
 - Дълг ≤ 60% от БВП
 - Максимално бързо догонване по AIC (ЕС=100)
@@ -175,15 +171,14 @@ P1 = """
 
 Правила:
 - Ако има контролирани KPI/числа (вграден DEMO модел) — използвай само тях. НЕ измисляй числа.
-- Ако няма контролирани данни, казваш какви данни са нужни и даваш ориентировъчен анализ.
-- При нарушаване на целите (напр. дефицит>3%, дълг>60% или конфликт с “без вдигане на ставки”) го маркирай изрично като риск.
-- Форматът е кратък, структуриран, управленски.
+- Ако няма контролирани данни, кажи какви данни са нужни и дай ориентировъчен анализ.
+- Ако нещо нарушава целите (дефицит>3%, дълг>60% или конфликт с “без вдигане на ставки”), го маркирай ясно.
 
-Изходен формат:
-1) Резюме за министър (30 секунди): 5 bullets
-2) Анализ: 4-8 bullets
-3) Рискове: 3-6 bullets
-4) Препоръка/компенсации: конкретни стъпки, без вдигане на ставки
+Формат на отговора:
+1) Резюме (30 секунди): 4–6 bullets
+2) Анализ: 4–10 bullets
+3) Рискове и условия: 3–8 bullets
+4) Варианти/препоръка: конкретни стъпки (без вдигане на ставки)
 5) Какви данни липсват (ако има)
 """
 
@@ -202,26 +197,26 @@ def get_client():
 
 def ask_ai(system: str, user: str, use_sources: bool, legal_citations: bool) -> str:
     """
-    Robust for demo:
-    - We do NOT rely on web tools (which may be unavailable).
-    - When use_sources=True, we strictly instruct to cite only OFFICIAL_BG_EU_DOMAINS and provide links.
+    Стабилно за демо:
+    - Не разчитаме на web-tools (може да не са активни).
+    - При use_sources=True: ограничаваме модела до allow-list домейни и искаме линкове.
     """
     client = get_client()
     if client is None:
-        return "Missing OPENAI_API_KEY in Streamlit Secrets."
+        return "⚠️ Липсва OPENAI_API_KEY в Streamlit Secrets."
 
     sys = system.strip() + "\n"
     if use_sources:
         sys += (
-            "\nРежим 'Провери източници' = ON.\n"
+            "\nРежим „Провери източници“ = ВКЛ.\n"
             "Ползвай само официални домейни от allow-list и давай линкове. "
             "Ако не намираш официален източник в allow-list, кажи го изрично.\n"
             "Allow-list: " + ", ".join(OFFICIAL_BG_EU_DOMAINS) + "\n"
         )
     if legal_citations:
         sys += (
-            "\nРежим 'Правни цитати' = ON.\n"
-            "- За правни теми: цитирай чл./ал. само ако имаш официален източник от allow-list.\n"
+            "\nРежим „Правни цитати“ = ВКЛ.\n"
+            "- При правни теми: цитирай чл./ал. само ако имаш официален източник от allow-list.\n"
             "- Не измисляй правни текстове.\n"
         )
 
@@ -233,7 +228,7 @@ def ask_ai(system: str, user: str, use_sources: bool, legal_citations: bool) -> 
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
-        return f"AI call failed: {e}"
+        return f"❌ AI повикването не мина: {e}"
 
 
 # =========================
@@ -267,42 +262,42 @@ def mini_card(name: str, status: str):
 
 
 # =========================
-# DEMO budget + policy engine
+# DEMO бюджет + engine
 # =========================
 def get_demo_budget():
     base_rev = [
-        ("VAT (total)", 22.0, ""),
-        ("Income tax", 10.0, ""),
-        ("Corporate tax", 4.0, ""),
-        ("Social contributions", 22.0, ""),
-        ("Excises", 6.0, ""),
-        ("EU funds & grants", 10.0, ""),
-        ("Other revenues", 18.0, ""),
+        ("ДДС (общо)", 22.0, ""),
+        ("ДДФЛ", 10.0, ""),
+        ("Корпоративен данък", 4.0, ""),
+        ("Осигуровки (общо)", 22.0, ""),
+        ("Акцизи", 6.0, ""),
+        ("Фондове/трансфери от ЕС", 10.0, ""),
+        ("Други приходи", 18.0, ""),
     ]
     base_exp = [
-        ("Pensions", 20.0, ""),
-        ("Wages (public sector)", 18.0, ""),
-        ("Healthcare", 10.0, ""),
-        ("Education", 8.0, ""),
-        ("Capex (public investment)", 9.0, ""),
-        ("Social programs (other)", 8.0, ""),
-        ("Defense & security", 6.0, ""),
-        ("Interest", 2.0, ""),
-        ("Other expenditures", 17.0, ""),
+        ("Пенсии", 20.0, ""),
+        ("Заплати (публичен сектор)", 18.0, ""),
+        ("Здравеопазване", 10.0, ""),
+        ("Образование", 8.0, ""),
+        ("Капиталови разходи (инвестиции)", 9.0, ""),
+        ("Социални програми (други)", 8.0, ""),
+        ("Отбрана и сигурност", 6.0, ""),
+        ("Лихви", 2.0, ""),
+        ("Други разходи", 17.0, ""),
     ]
     inp = {"gdp": 210.0, "debt": 58.0, "aic_bg": 70.0, "aic_eu": 100.0}
-    rev_df = pd.DataFrame(base_rev, columns=["Category", "Amount (bn BGN)", "Notes"])
-    exp_df = pd.DataFrame(base_exp, columns=["Category", "Amount (bn BGN)", "Notes"])
+    rev_df = pd.DataFrame(base_rev, columns=["Категория", "Сума (млрд. лв.)", "Бележки"])
+    exp_df = pd.DataFrame(base_exp, columns=["Категория", "Сума (млрд. лв.)", "Бележки"])
     return inp, rev_df, exp_df
 
 
 POLICY_DELTAS = {
-    "VAT_REST_9": {"type": "rev", "cat": "VAT (total)", "delta": -0.6, "label": "ДДС 9% за ресторанти (връщане)"},
-    "PENSIONS_10": {"type": "exp_mult", "cat": "Pensions", "mult": 1.10, "label": "Пенсии +10%"},
+    "VAT_REST_9": {"type": "rev", "cat": "ДДС (общо)", "delta": -0.6, "label": "ДДС 9% за ресторанти (връщане)"},
+    "PENSIONS_10": {"type": "exp_mult", "cat": "Пенсии", "mult": 1.10, "label": "Пенсии +10%"},
     "INVEST": {
         "type": "exp_add_multi",
-        "adds": [("Capex (public investment)", 1.0), ("Education", 0.3), ("Healthcare", 0.3)],
-        "label": "Инвестиции (Capex+обр.+здр.)",
+        "adds": [("Капиталови разходи (инвестиции)", 1.0), ("Образование", 0.3), ("Здравеопазване", 0.3)],
+        "label": "Инвестиции (капекс+обр.+здр.)",
     },
 }
 
@@ -324,36 +319,36 @@ def apply_policies(selected_keys, rev_df, exp_df):
     for k in selected_keys:
         p = POLICY_DELTAS[k]
         if p["type"] == "rev":
-            rev_df.loc[rev_df["Category"] == p["cat"], "Amount (bn BGN)"] += p["delta"]
-            notes.append(f"{p['label']} -> {p['delta']:+.1f} млрд. лв. (approx {bgn_to_eur(p['delta']):+.2f} млрд. EUR) [DEMO]")
+            rev_df.loc[rev_df["Категория"] == p["cat"], "Сума (млрд. лв.)"] += p["delta"]
+            notes.append(f"{p['label']} → {p['delta']:+.1f} млрд. лв. (≈ {bgn_to_eur(p['delta']):+.2f} млрд. €) [DEMO]")
         elif p["type"] == "exp_mult":
-            exp_df.loc[exp_df["Category"] == p["cat"], "Amount (bn BGN)"] *= p["mult"]
-            notes.append(f"{p['label']} -> x{p['mult']:.2f} върху {p['cat']} [DEMO]")
+            exp_df.loc[exp_df["Категория"] == p["cat"], "Сума (млрд. лв.)"] *= p["mult"]
+            notes.append(f"{p['label']} → x{p['mult']:.2f} върху {p['cat']} [DEMO]")
         elif p["type"] == "exp_add_multi":
             for cat, add in p["adds"]:
-                exp_df.loc[exp_df["Category"] == cat, "Amount (bn BGN)"] += add
+                exp_df.loc[exp_df["Категория"] == cat, "Сума (млрд. лв.)"] += add
             adds_txt = ", ".join([f"{cat} +{add:.1f}" for cat, add in p["adds"]])
-            notes.append(f"{p['label']} -> {adds_txt} (млрд. лв.) [DEMO]")
+            notes.append(f"{p['label']} → {adds_txt} (млрд. лв.) [DEMO]")
     return rev_df, exp_df, notes
 
 
 def traffic(deficit_pct: float, debt_pct: float):
     def light(v, g, y):
         if v <= g:
-            return "GREEN"
+            return "🟩"
         if v <= y:
-            return "YELLOW"
-        return "RED"
+            return "🟨"
+        return "🟥"
 
     return light(abs(deficit_pct), 0.03, 0.045), light(debt_pct, 0.60, 0.70)
 
 
 def overall_rating(def_light: str, debt_light: str) -> str:
-    if def_light == "RED" or debt_light == "RED":
-        return "RED"
-    if def_light == "YELLOW" or debt_light == "YELLOW":
-        return "YELLOW"
-    return "GREEN"
+    if def_light == "🟥" or debt_light == "🟥":
+        return "🟥 Рисковано"
+    if def_light == "🟨" or debt_light == "🟨":
+        return "🟨 На ръба"
+    return "🟩 Устойчиво"
 
 
 def scorecard(selected, deficit_pct, debt_pct):
@@ -362,22 +357,22 @@ def scorecard(selected, deficit_pct, debt_pct):
     has_pens = "PENSIONS_10" in selected
     has_vatcut = "VAT_REST_9" in selected
 
-    growth = "GREEN" if has_invest else "YELLOW"
-    infl = "YELLOW" if (abs(deficit_pct) > 0.03 and (has_pens or has_vatcut)) else "GREEN"
-    ineq = "GREEN" if has_pens else "YELLOW"
-    feas = "GREEN"
+    growth = "🟩" if has_invest else "🟨"
+    infl = "🟨" if (abs(deficit_pct) > 0.03 and (has_pens or has_vatcut)) else "🟩"
+    ineq = "🟩" if has_pens else "🟨"
+    feas = "🟩"
     if has_vatcut:
-        feas = "YELLOW"
+        feas = "🟨"
     if has_pens and has_vatcut and has_invest:
-        feas = "RED"
+        feas = "🟥"
 
     return [
-        ("Fiscal stability (deficit)", def_l),
-        ("Debt", debt_l),
-        ("Growth (proxy)", growth),
-        ("Inflation risk (proxy)", infl),
-        ("Inequality (proxy)", ineq),
-        ("Administrative feasibility (proxy)", feas),
+        ("Фискална стабилност (дефицит)", def_l),
+        ("Дълг", debt_l),
+        ("Растеж (proxy)", growth),
+        ("Инфлационен риск (proxy)", infl),
+        ("Неравенство (proxy)", ineq),
+        ("Адм. изпълнимост (proxy)", feas),
     ]
 
 
@@ -387,7 +382,7 @@ def compensation_packages(gdp_bgn: float, exp_df: pd.DataFrame, deficit_bgn: flo
     if gap <= 0:
         return []
 
-    capex = float(exp_df.loc[exp_df["Category"] == "Capex (public investment)", "Amount (bn BGN)"].iloc[0])
+    capex = float(exp_df.loc[exp_df["Категория"] == "Капиталови разходи (инвестиции)", "Сума (млрд. лв.)"].iloc[0])
     capex_cut = min(gap, max(0.0, capex * 0.25))
     a_new_def = deficit_bgn - capex_cut
 
@@ -400,24 +395,20 @@ def compensation_packages(gdp_bgn: float, exp_df: pd.DataFrame, deficit_bgn: flo
 
     return gap, [
         {
-            "name": "Package A: phase capex (no tax hikes)",
-            "actions": [
-                f"Phase capex: {capex_cut:.2f} bn BGN (approx {bgn_to_eur(capex_cut):.2f} bn EUR)"
-            ],
+            "name": "Пакет А: Етапиране/отлагане на инвестиции (без вдигане на ставки)",
+            "actions": [f"Етапиране: {capex_cut:.2f} млрд. лв. (≈ {bgn_to_eur(capex_cut):.2f} млрд. €)"],
             "new_def_bgn": a_new_def,
         },
         {
-            "name": "Package B: timing + caps (no tax hikes)",
-            "actions": [
-                f"Net improvement ~{b_improve:.2f} bn BGN (approx {bgn_to_eur(b_improve):.2f} bn EUR)"
-            ],
+            "name": "Пакет Б: Поетапно въвеждане + тавани (без вдигане на ставки)",
+            "actions": [f"Нетно подобрение ~{b_improve:.2f} млрд. лв. (≈ {bgn_to_eur(b_improve):.2f} млрд. €)"],
             "new_def_bgn": b_new_def,
         },
         {
-            "name": "Package C: collection + efficiency (no rate hikes)",
+            "name": "Пакет В: Събираемост + ефективност (без вдигане на ставки)",
             "actions": [
-                f"Improve collection (effect): +{c_rev_gain:.2f} bn BGN (approx {bgn_to_eur(c_rev_gain):.2f} bn EUR)",
-                f"Efficiency/reallocation: -{c_spend_save:.2f} bn BGN (approx {bgn_to_eur(c_spend_save):.2f} bn EUR)",
+                f"+Събираемост (ефект): {c_rev_gain:.2f} млрд. лв. (≈ {bgn_to_eur(c_rev_gain):.2f} млрд. €)",
+                f"-Ефективност/пренасочване: {c_spend_save:.2f} млрд. лв. (≈ {bgn_to_eur(c_spend_save):.2f} млрд. €)",
             ],
             "new_def_bgn": c_new_def,
         },
@@ -425,45 +416,47 @@ def compensation_packages(gdp_bgn: float, exp_df: pd.DataFrame, deficit_bgn: flo
 
 
 # =========================
-# NON-FISCAL: deterministic local answers
+# НЕ-ФИСКАЛНИ: детерминистични отговори (бързи)
 # =========================
 def answer_admin_mol():
-    st.subheader("Administration: Change of manager (EOOD) - checklist (DEMO)")
+    st.subheader("Администрация: Смяна на МОЛ (управител) на ЕООД — чеклист (DEMO)")
     st.markdown(
         """
-**Where:** Commercial Register (Registry Agency)  
-**Application:** typically A4  
+**Къде:** Търговски регистър (Агенция по вписванията)  
+**Заявление:** обичайно **А4** (промяна по обстоятелства)
 
-**Typical documents:**
-- Sole owner decision to dismiss/appoint manager
-- Consent + specimen signature of the new manager (often notarized)
-- Required declarations under Commercial Act (case-dependent)
-- State fee (lower electronically)
+**Типични документи:**
+- Решение на едноличния собственик за освобождаване/назначаване на управител
+- Съгласие + образец от подпис (спесимен) на новия управител (често с нотариална заверка)
+- Декларации по ТЗ (според случая)
+- Държавна такса (електронно е по-ниска)
 
-**Steps:**
-1) Prepare decision/declarations/specimen  
-2) Submit in Commercial Register (QES or onsite)  
-3) After entry: notify banks/partners/contractors  
+**Стъпки:**
+1) Подготви решения/декларации/спесимен  
+2) Подай в ТР (с КЕП или на място)  
+3) След вписване: банки/партньори/договори  
 """
     )
+    st.caption("Бележка: демо ориентир. Реалният пакет документи зависи от конкретиката и изискванията за заверки.")
 
 
 def answer_legal_citizenship():
-    st.subheader("Law: Bulgarian Citizenship Act - analysis framework (DEMO)")
+    st.subheader("Право: Закон за българското гражданство — рамка за анализ (DEMO)")
     st.markdown(
         """
-**How to assess an amendment proposal:**
-1) What changes exactly (requirements, terms, exceptions)  
-2) Compliance with Constitution and international commitments  
-3) Administrative feasibility (capacity, deadlines, controls)  
-4) Risks: vague definitions, appeals, conflicts of norms, transitional rules  
-5) How to strengthen: definitions, transitional provisions, bylaws, IT/process changes  
+**Как да оцениш предложение за промяна:**
+1) Какво точно се изменя (условия, срокове, изключения) — по точки  
+2) Съответствие с Конституция и международни ангажименти  
+3) Административна изпълнимост (капацитет, срокове, контрол)  
+4) Рискове: неясни дефиниции, обжалвания, конфликт на норми, преходни режими  
+5) Как да се „бетонира“: ясни дефиниции, преходни разпоредби, подзаконови актове, ИТ/процесни промени  
 """
     )
+    st.caption("За конкретика: нужен е текстът на проекта (чл./ал./§), за да се маркират точните изменения.")
 
 
 # =========================
-# CLASSIFY
+# КЛАСИФИКАЦИЯ
 # =========================
 def classify(q: str) -> str:
     t = (q or "").lower()
@@ -477,44 +470,44 @@ def classify(q: str) -> str:
 
 
 # =========================
-# AI contexts
+# AI контексти
 # =========================
 def build_context_general(q: str) -> str:
     return f"""
-Question:
+Въпрос:
 {q}
 
-Notes:
-- Provide a concise, practical answer.
-- If legal/administrative: steps, documents, institutions, risks.
-- If fiscal but without controlled numbers: specify what data is required and avoid inventing numbers.
+Инструкции:
+- Дай кратък, практичен отговор.
+- Ако темата е правна/административна: стъпки, документи, институции, срокове, рискове.
+- Ако темата е фискална, но няма контролирани числа: кажи какви данни са нужни и НЕ измисляй стойности.
 """
 
 
 def build_context_fiscal(q: str, kpis: dict, score_rows: list, notes: list) -> str:
     score_txt = ", ".join([f"{n}={s}" for n, s in score_rows])
-    notes_txt = "\n".join([f"- {n}" for n in notes]) if notes else "- none"
+    notes_txt = "\n".join([f"- {n}" for n in notes]) if notes else "- няма засечени конкретни мерки"
     return f"""
-Question:
+Въпрос:
 {q}
 
-Detected measures (DEMO):
+Засечени мерки (DEMO):
 {notes_txt}
 
-Controlled KPI (EUR):
-- GDP: {kpis['gdp_eur']}
-- Revenue: {kpis['rev_eur']}
-- Expenditure: {kpis['exp_eur']}
-- Deficit: {kpis['def_eur']} ({kpis['def_pct']} of GDP; target <=3%)
-- Debt: {kpis['debt_eur']} ({kpis['debt_pct']} of GDP; target <=60%)
+Контролирани KPI (EUR):
+- БВП: {kpis['gdp_eur']}
+- Приходи: {kpis['rev_eur']}
+- Разходи: {kpis['exp_eur']}
+- Дефицит: {kpis['def_eur']} ({kpis['def_pct']} от БВП; цел <=3%)
+- Дълг: {kpis['debt_eur']} ({kpis['debt_pct']} от БВП; цел <=60%)
 - AIC: BG {kpis['aic_bg']} / EU {kpis['aic_eu']}
 
-Traffic light: deficit={kpis['def_light']} debt={kpis['debt_light']}
+Светофар: дефицит={kpis['def_light']} | дълг={kpis['debt_light']}
 Scorecard (DEMO): {score_txt}
 
-Rules:
-- Use only the KPI above; do not invent figures.
-- If deficit exceeds 3%, propose compensations without raising tax rates.
+Правила:
+- Използвай само KPI по-горе. Не измисляй числа.
+- Ако дефицитът е над 3%, предложи компенсации без вдигане на ставки.
 """
 
 
@@ -525,9 +518,6 @@ if "history" not in st.session_state:
     st.session_state.history = []
 if "chat" not in st.session_state:
     st.session_state.chat = []
-if "first_run" not in st.session_state:
-    st.session_state.first_run = True
-
 
 # =========================
 # HEADER + LANDING
@@ -540,17 +530,17 @@ st.markdown(
     <div style="width:46px;height:46px;border-radius:14px;border:1px solid rgba(255,255,255,0.14);
                 background:rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;
                 font-weight:900;">
-      BG
+      🇧🇬
     </div>
     <div style="flex:1;">
-      <div style="font-size:18px;font-weight:950;line-height:1.1;">BGGOVAI интелигентен съветник</div>
+      <div style="font-size:18px;font-weight:950;line-height:1.1;">Моят ИИ съветник</div>
       <div style="color:rgba(255,255,255,0.70);font-size:13px;margin-top:3px;">
-        AI advice for public policy (DEMO)
+        BGGOVAI • Институционален стил • DEMO
       </div>
       <div class="badges" style="margin-top:8px;">
-        <span class="badge">Minister Edition</span>
-        <span class="badge">DEMO data</span>
-        <span class="badge">updated {datetime.now().strftime("%d.%m.%Y %H:%M")}</span>
+        <span class="badge">v1.0</span>
+        <span class="badge">DEMO данни</span>
+        <span class="badge">обновено {datetime.now().strftime("%d.%m.%Y %H:%M")}</span>
       </div>
     </div>
   </div>
@@ -562,17 +552,17 @@ st.markdown(
 st.markdown(
     """
 <div class="hero">
-  <div class="hero-title">Institutional AI adviser for government decisions</div>
-  <p class="hero-sub">One input. One answer. With fiscal guardrails and accountable reasoning.</p>
+  <div class="hero-title">Един въпрос. Един структуриран отговор.</div>
+  <p class="hero-sub">За бюджет, политики, право и администрация — с ясни рискове и варианти.</p>
   <ul class="hero-bullets">
-    <li>Evaluates measures and policies against deficit & debt constraints</li>
-    <li>Highlights risks and proposes compensations without tax rate hikes</li>
-    <li>Supports legal and administrative topics with actionable steps</li>
+    <li>Оценява мерки спрямо дефицит/дълг и цели за догонване по AIC</li>
+    <li>Маркира рискове и предлага компенсации (без вдигане на данъчни ставки)</li>
+    <li>Дава практични стъпки за правни и административни теми</li>
   </ul>
 </div>
 
 <div class="notice">
-<b>DEMO notice:</b> This is a prototype. Outputs are advisory and may require legal/financial validation.
+<b>Внимание:</b> Това е демо прототип. Отговорите са ориентировъчни и може да изискват правна/финансова проверка.
 </div>
 """,
     unsafe_allow_html=True,
@@ -583,19 +573,19 @@ st.markdown(
 # =========================
 c1, c2, c3 = st.columns([1.2, 1.2, 2.6])
 with c1:
-    use_sources = st.toggle("Verify sources", value=False)
+    use_sources = st.toggle("Провери източници", value=False)
 with c2:
-    legal_citations = st.toggle("Legal citations (Art./Para.)", value=False)
+    legal_citations = st.toggle("Правни цитати (чл./ал.)", value=False)
 with c3:
-    st.caption("If 'Verify sources' is ON, AI will restrict references to official BG+EU domains (allow-list).")
+    st.caption("При включено „Провери източници“, ИИ се ограничава до официални BG+EU домейни (allow-list) и дава линкове.")
 
-st.markdown("### Ask a question")
-st.caption("What you write here can become policy.")
+st.markdown("### 💬 Задай въпрос")
+st.caption("Пиши свободно — ще получиш резюме, анализ, рискове и варианти.")
 
 # =========================
 # CHAT INPUT
 # =========================
-chat_q = st.chat_input("Ask freely: budget, deficit, debt, AIC, citizenship law, company management change, etc.")
+chat_q = st.chat_input("Напр.: „Какъв е ефектът от ДДС 9% за ресторанти?“ или „Как се сменя МОЛ на ЕООД?“")
 if chat_q:
     st.session_state.chat.append({"role": "user", "content": chat_q})
 
@@ -614,52 +604,52 @@ intent = classify(q)
 # OUTPUT TABS
 # =========================
 tab_result, tab_ai, tab_archive = st.tabs(
-    ["Result (executive)", "AI analysis", "Archive (government decisions)"]
+    ["Резултат (управленски)", "ИИ анализ", "Архив на анализите (DEMO)"]
 )
 
 # =========================
-# ADMIN / LEGAL (no fiscal cockpit)
+# ADMIN / LEGAL (без фискален cockpit)
 # =========================
 if intent == "ADMIN_MOL":
     with tab_result:
         answer_admin_mol()
-        st.markdown("#### Minister summary (30 seconds)")
+        st.markdown("#### Резюме (30 секунди)")
         summary = ask_ai(P1, build_context_general(q), use_sources, legal_citations)
         st.write(summary)
         st.session_state.chat.append({"role": "assistant", "content": summary})
 
     with tab_ai:
-        st.markdown("#### Detailed AI analysis")
+        st.markdown("#### Подробен ИИ анализ")
         txt = ask_ai(P1, build_context_general(q), use_sources, legal_citations)
         st.write(txt)
 
     with tab_archive:
-        st.markdown("### Archive of government decisions (DEMO)")
+        st.markdown("### Архив на анализите (DEMO)")
         if st.session_state.history:
             st.dataframe(pd.DataFrame(st.session_state.history), use_container_width=True, hide_index=True)
         else:
-            st.info("No fiscal decisions recorded yet.")
+            st.info("Няма записани фискални анализи.")
     st.stop()
 
 if intent == "LEGAL_CITIZENSHIP":
     with tab_result:
         answer_legal_citizenship()
-        st.markdown("#### Minister summary (30 seconds)")
+        st.markdown("#### Резюме (30 секунди)")
         summary = ask_ai(P1, build_context_general(q), use_sources, legal_citations)
         st.write(summary)
         st.session_state.chat.append({"role": "assistant", "content": summary})
 
     with tab_ai:
-        st.markdown("#### Detailed AI analysis")
+        st.markdown("#### Подробен ИИ анализ")
         txt = ask_ai(P1, build_context_general(q), use_sources, legal_citations)
         st.write(txt)
 
     with tab_archive:
-        st.markdown("### Archive of government decisions (DEMO)")
+        st.markdown("### Архив на анализите (DEMO)")
         if st.session_state.history:
             st.dataframe(pd.DataFrame(st.session_state.history), use_container_width=True, hide_index=True)
         else:
-            st.info("No fiscal decisions recorded yet.")
+            st.info("Няма записани фискални анализи.")
     st.stop()
 
 # =========================
@@ -671,8 +661,8 @@ if intent == "FISCAL":
     selected = detect_policies_from_text(q)
     rev_df, exp_df, notes = apply_policies(selected, rev_df, exp_df)
 
-    total_rev_bgn = float(rev_df["Amount (bn BGN)"].sum())
-    total_exp_bgn = float(exp_df["Amount (bn BGN)"].sum())
+    total_rev_bgn = float(rev_df["Сума (млрд. лв.)"].sum())
+    total_exp_bgn = float(exp_df["Сума (млрд. лв.)"].sum())
     deficit_bgn = total_exp_bgn - total_rev_bgn
 
     gdp_bgn = float(inp["gdp"])
@@ -707,56 +697,55 @@ if intent == "FISCAL":
         "debt_light": debt_light,
     }
 
-    # For UI color-ish text
-    def light_label(x: str) -> str:
-        return {"GREEN": "GREEN", "YELLOW": "YELLOW", "RED": "RED"}.get(x, x)
-
-    # Record to archive
+    # Запис в архив
     st.session_state.history.append(
         {
-            "Time": datetime.now().strftime("%d.%m.%Y %H:%M"),
-            "Question": q,
-            "Detected measures": ", ".join([POLICY_DELTAS[k]["label"] for k in selected]) if selected else "(none)",
-            "Deficit %": f"{deficit_pct * 100:.2f}%",
-            "Debt %": f"{debt_pct * 100:.2f}%",
+            "Време": datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "Въпрос": q,
+            "Засечени мерки": ", ".join([POLICY_DELTAS[k]["label"] for k in selected]) if selected else "(няма)",
+            "Дефицит %": f"{deficit_pct * 100:.2f}%",
+            "Дълг %": f"{debt_pct * 100:.2f}%",
             "AIC": f"{inp['aic_bg']:.1f}",
-            "Rating": rating,
+            "Оценка": rating,
         }
     )
 
-    # Result tab (executive)
     with tab_result:
-        st.markdown("### Executive cockpit (EUR)")
+        st.markdown("### 🎛️ Фискален cockpit (показва се само при фискални въпроси)")
 
         r1, r2, r3, r4 = st.columns(4)
         with r1:
-            kpi_card("GDP", fmt_bn_eur(gdp_eur), "DEMO")
+            kpi_card("БВП", fmt_bn_eur(gdp_eur), "DEMO")
         with r2:
-            kpi_card("Revenue", fmt_bn_eur(total_rev_eur), "DEMO")
+            kpi_card("Приходи", fmt_bn_eur(total_rev_eur), "DEMO")
         with r3:
-            kpi_card("Expenditure", fmt_bn_eur(total_exp_eur), "DEMO")
+            kpi_card("Разходи", fmt_bn_eur(total_exp_eur), "DEMO")
         with r4:
-            kpi_card("Deficit", fmt_bn_eur(deficit_eur), f"{deficit_pct * 100:.2f}% of GDP (target <=3%)")
+            kpi_card("Дефицит", fmt_bn_eur(deficit_eur), f"{deficit_pct * 100:.2f}% от БВП (цел ≤3%)")
 
         r5, r6, r7 = st.columns([1.2, 1.2, 1.6])
         with r5:
-            kpi_card("Debt", fmt_bn_eur(debt_eur), f"{debt_pct * 100:.2f}% of GDP (target <=60%)")
+            kpi_card("Дълг", fmt_bn_eur(debt_eur), f"{debt_pct * 100:.2f}% от БВП (цел ≤60%)")
         with r6:
             kpi_card("AIC", f"{inp['aic_bg']:.1f} / {inp['aic_eu']:.0f}", "BG / EU=100")
         with r7:
-            kpi_card("Traffic", f"Def={light_label(def_light)} | Debt={light_label(debt_light)}", f"Overall: {rating}")
+            kpi_card("Оценка", rating, f"Светофар: Дефицит {def_light} | Дълг {debt_light}")
 
-        st.markdown("### Minister summary (30 seconds)")
+        st.markdown("#### Резюме (30 секунди)")
         ai_ctx = build_context_fiscal(q, kpis, sc, notes)
-        minister_summary = ask_ai(P1, ai_ctx, use_sources, legal_citations)
-        st.write(minister_summary)
-        st.session_state.chat.append({"role": "assistant", "content": minister_summary})
+        summary = ask_ai(P1, ai_ctx, use_sources, legal_citations)
+        st.write(summary)
+        st.session_state.chat.append({"role": "assistant", "content": summary})
 
-        st.markdown("### Policy guardrails (risk / protection)")
+        st.markdown("### Проверка срещу цели")
         if deficit_pct > 0.03:
-            st.warning("Risk: deficit exceeds 3% of GDP. Compensation required (no tax rate hikes).")
+            st.warning("⚠️ Риск: дефицитът надвишава 3% от БВП. Нужни са компенсации (без вдигане на ставки).")
         if debt_pct > 0.60:
-            st.warning("Risk: debt exceeds 60% of GDP.")
+            st.warning("⚠️ Риск: дългът надвишава 60% от БВП.")
+
+        if notes:
+            st.markdown("### Засечени мерки (по текста)")
+            st.write("• " + "\n• ".join(notes))
 
         st.markdown("### Scorecard")
         s1, s2 = st.columns(2)
@@ -764,76 +753,75 @@ if intent == "FISCAL":
             with (s1 if i % 2 == 0 else s2):
                 mini_card(name, status)
 
-        st.markdown("### Compensations (if needed)")
+        st.markdown("### Компенсации (ако дефицитът е над 3%)")
         if not comp_packs:
-            st.success("Deficit is within 3% -> no compensation needed.")
+            st.success("✅ Дефицитът е в рамките на 3% → компенсация не е нужна.")
         else:
             st.warning(
-                f"Above target: need approx {comp_gap:.2f} bn BGN (approx {bgn_to_eur(comp_gap):.2f} bn EUR) improvement to return under 3%."
+                f"⚠️ Над целта: нужно е ~ {comp_gap:.2f} млрд. лв. "
+                f"(≈ {bgn_to_eur(comp_gap):.2f} млрд. €) подобрение, за да се върнем под 3%."
             )
             for p in comp_packs:
                 new_def_pct = p["new_def_bgn"] / gdp_bgn
                 new_def_eur = bgn_to_eur(p["new_def_bgn"])
                 st.markdown(f"**{p['name']}**")
-                st.write(" - " + "\n - ".join(p["actions"]))
-                st.caption(f"New deficit: {fmt_bn_eur(new_def_eur)} ({new_def_pct * 100:.2f}% GDP)")
+                st.write("• " + "\n• ".join(p["actions"]))
+                st.caption(f"Нов дефицит: {fmt_bn_eur(new_def_eur)} ({new_def_pct * 100:.2f}% от БВП)")
                 st.divider()
 
-        with st.expander("Advanced details (tables)"):
+        with st.expander("Разширени детайли (таблици)"):
             rv = rev_df.copy()
-            rv["Amount (bn EUR)"] = rv["Amount (bn BGN)"].apply(bgn_to_eur)
-            rv = rv.drop(columns=["Amount (bn BGN)"])
+            rv["Сума (млрд. €)"] = rv["Сума (млрд. лв.)"].apply(bgn_to_eur)
+            rv = rv.drop(columns=["Сума (млрд. лв.)"])
 
             ev = exp_df.copy()
-            ev["Amount (bn EUR)"] = ev["Amount (bn BGN)"].apply(bgn_to_eur)
-            ev = ev.drop(columns=["Amount (bn BGN)"])
+            ev["Сума (млрд. €)"] = ev["Сума (млрд. лв.)"].apply(bgn_to_eur)
+            ev = ev.drop(columns=["Сума (млрд. лв.)"])
 
             left, right = st.columns(2)
             with left:
-                st.markdown("**Revenue (EUR)**")
+                st.markdown("**Приходи (EUR)**")
                 st.dataframe(rv, use_container_width=True, hide_index=True)
             with right:
-                st.markdown("**Expenditure (EUR)**")
+                st.markdown("**Разходи (EUR)**")
                 st.dataframe(ev, use_container_width=True, hide_index=True)
 
-    # AI tab
     with tab_ai:
-        st.markdown("### AI analysis (controlled numbers)")
+        st.markdown("### ИИ анализ (с контролирани числа)")
         ai_ctx = build_context_fiscal(q, kpis, sc, notes)
         txt = ask_ai(P1, ai_ctx, use_sources, legal_citations)
         st.write(txt)
 
-        with st.expander("Prompt/context (transparency)"):
+        with st.expander("Контекст към ИИ (прозрачност)"):
             st.code(ai_ctx)
 
-    # Archive tab
     with tab_archive:
-        st.markdown("### Archive of government decisions (DEMO)")
+        st.markdown("### Архив на анализите (DEMO)")
         if "history" in st.session_state and len(st.session_state.history) > 0:
             df_hist = pd.DataFrame(st.session_state.history)
             st.dataframe(df_hist, use_container_width=True, hide_index=True)
         else:
-            st.info("No decisions recorded yet.")
+            st.info("Няма записани анализи.")
 
 else:
-    # GENERAL mode (no fiscal cockpit)
+    # GENERAL режим (без фискален cockpit)
     with tab_result:
-        st.markdown("### Executive answer")
-        st.info("No fiscal cockpit is shown for non-fiscal topics. If the question is budget-related, mention deficit/debt/budget/AIC.")
-        st.markdown("#### Minister summary (30 seconds)")
+        st.markdown("### Резултат")
+        st.info("За нефискални теми не се показват финансови сметки. Ако въпросът е бюджетен — спомени дефицит/дълг/бюджет/AIC или конкретна мярка.")
+        st.markdown("#### Резюме (30 секунди)")
         summary = ask_ai(P1, build_context_general(q), use_sources, legal_citations)
         st.write(summary)
         st.session_state.chat.append({"role": "assistant", "content": summary})
 
     with tab_ai:
-        st.markdown("### AI analysis")
+        st.markdown("### ИИ анализ")
         txt = ask_ai(P1, build_context_general(q), use_sources, legal_citations)
         st.write(txt)
 
     with tab_archive:
-        st.markdown("### Archive of government decisions (DEMO)")
+        st.markdown("### Архив на анализите (DEMO)")
         if "history" in st.session_state and len(st.session_state.history) > 0:
             df_hist = pd.DataFrame(st.session_state.history)
             st.dataframe(df_hist, use_container_width=True, hide_index=True)
         else:
-            st.info("No fiscal decisions recorded yet.")
+            st.info("Няма записани анализи.")
