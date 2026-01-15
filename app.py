@@ -1,187 +1,212 @@
-import base64
-from io import BytesIO
-
-import pandas as pd
 import streamlit as st
-from openpyxl import load_workbook
+import pandas as pd
+from datetime import datetime
+from openai import OpenAI
 
+# =========================
+# CONFIG
+# =========================
+st.set_page_config(page_title="Република България — BGGovAI (DEMO)", layout="wide")
 
-# =========================================
-# Page config
-# =========================================
-st.set_page_config(
-    page_title="Република България — BGGovAI (DEMO)",
-    layout="wide",
-)
+BGN_PER_EUR = 1.95583
+def bgn_to_eur(x): return float(x) / BGN_PER_EUR
+def fmt_bn_eur(x): return f"{x:.2f} млрд. €"
+def pct(x): return f"{x*100:.0f}%"
 
+# =========================
+# DARK COCKPIT THEME (CSS)
+# =========================
+st.markdown("""
+<style>
+/* --- global --- */
+:root{
+  --bg: #0b1220;
+  --card: rgba(255,255,255,0.06);
+  --card2: rgba(255,255,255,0.08);
+  --border: rgba(255,255,255,0.10);
+  --text: rgba(255,255,255,0.92);
+  --muted: rgba(255,255,255,0.70);
+}
+.stApp {
+  background: radial-gradient(1200px 800px at 20% 0%, rgba(0,150,110,0.18), transparent 50%),
+              radial-gradient(900px 700px at 90% 10%, rgba(214,38,18,0.16), transparent 50%),
+              linear-gradient(180deg, #070b14, #0b1220 40%, #0b1220);
+  color: var(--text);
+}
+.block-container { padding-top: 1.0rem; padding-bottom: 2.0rem; max-width: 1180px; }
+h1,h2,h3 { letter-spacing: -0.02em; }
+small, .stCaption, .stMarkdown p { color: var(--muted) !important; }
 
-# =========================================
-# OpenAI (openai>=1.0.0) — real-time AI
-# =========================================
-@st.cache_resource
-def get_openai_client():
-    try:
-        api_key = st.secrets.get("OPENAI_API_KEY", None)
-    except Exception:
-        api_key = None
-    if not api_key:
-        return None
-    from openai import OpenAI  # openai>=1.0.0
-    return OpenAI(api_key=api_key)
+/* hide toolbar/footer */
+div[data-testid="stToolbar"] { visibility: hidden; height: 0; }
+footer { visibility: hidden; }
 
+/* --- inputs --- */
+div[data-baseweb="input"], textarea {
+  background: rgba(255,255,255,0.06) !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+  border-radius: 14px !important;
+}
+div[data-testid="stCheckbox"] label, div[data-testid="stSelectbox"] label, div[data-testid="stTextInput"] label {
+  color: var(--muted) !important;
+}
 
-def ask_ai(system: str, context: str) -> str:
-    client = get_openai_client()
-    if client is None:
-        return (
-            "⚠️ AI не е активен.\n\n"
-            "Провери Secrets:\n"
-            "OPENAI_API_KEY = \"sk-...\""
-        )
-    model = st.secrets.get("OPENAI_MODEL", "gpt-4o-mini")
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": context},
-            ],
-            temperature=0.2,
-        )
-        return resp.choices[0].message.content or ""
-    except Exception as e:
-        return f"❌ AI повикването не мина.\n\nТехнически детайл: {e}"
+/* --- buttons --- */
+.stButton>button {
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.05));
+  color: var(--text);
+  padding: 0.65rem 1rem;
+  font-weight: 700;
+}
+.stButton>button:hover {
+  border-color: rgba(255,255,255,0.25);
+  background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.08));
+}
 
+/* --- cards --- */
+.card {
+  border: 1px solid rgba(255,255,255,0.12);
+  background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.04));
+  border-radius: 18px;
+  padding: 14px 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+}
+.card h4 { margin: 0 0 6px 0; font-size: 13px; color: var(--muted); font-weight: 700; }
+.big { font-size: 22px; font-weight: 900; margin: 0; color: var(--text); }
+.sub { font-size: 12px; margin-top: 6px; color: var(--muted); }
 
-# =========================================
-# Inline demo crest (no assets needed)
-# =========================================
-DEMO_CREST_SVG = """\
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <defs>
-    <linearGradient id="g" x1="0" x2="1">
-      <stop offset="0" stop-color="#00966E"/>
-      <stop offset="1" stop-color="#D62612"/>
-    </linearGradient>
-  </defs>
-  <rect x="8" y="8" width="112" height="112" rx="18" fill="#ffffff" stroke="#111827" stroke-width="2"/>
-  <path d="M64 24c18 0 34 10 34 26v18c0 20-16 36-34 36S30 88 30 68V50c0-16 16-26 34-26z"
-        fill="url(#g)" stroke="#111827" stroke-width="2"/>
-  <path d="M64 40l8 16 18 2-13 12 3 18-16-9-16 9 3-18-13-12 18-2z"
-        fill="#ffffff" opacity="0.9"/>
-  <text x="64" y="118" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#111827">
-    DEMO
-  </text>
-</svg>
+/* --- header --- */
+.govbar {
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 18px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03));
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  margin-bottom: 14px;
+}
+.flag { height: 8px; background: linear-gradient(#fff 33%, #00966E 33% 66%, #D62612 66%); }
+.govtop { display:flex; gap:12px; align-items:center; padding: 14px 16px; }
+.badges { display:flex; gap:8px; flex-wrap: wrap; }
+.badge {
+  display:inline-block; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06);
+  font-size: 12px; color: var(--muted);
+}
+
+/* tables */
+[data-testid="stDataFrame"] {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+/* sidebar */
+section[data-testid="stSidebar"] {
+  background: rgba(255,255,255,0.04);
+  border-right: 1px solid rgba(255,255,255,0.10);
+}
+</style>
+""", unsafe_allow_html=True)
+
+# =========================
+# TAX PARAMS (INFO)
+# =========================
+TAX = {
+    "VAT_standard": 0.20,
+    "VAT_reduced": 0.09,
+    "PIT_flat": 0.10,
+    "CIT_flat": 0.10,
+    "DIV_WHT": 0.05,
+    "HEALTH": 0.08,
+    "SSC_total_approx": 0.25,
+}
+
+# =========================
+# MASTER PROMPT (p1)
+# =========================
+P1 = """
+Ти си BGGovAI — институционален ИИ съветник на Република България
+за публични политики, бюджет, данъци, социални разходи и право.
+
+Цели:
+- Дефицит ≤ 3% от БВП
+- Дълг ≤ 60% от БВП
+- Максимално бързо догонване по AIC (ЕС=100)
+- Без повишаване на данъчните ставки
+
+Работиш в DEMO режим с контролирани числа. Не измисляш нови данни.
+Разграничаваш „действащо право“ от „предложена политика“.
+Даваш политически рейтинг: 🟩 устойчиво, 🟨 рисково, 🟥 фискално опасно.
+
+Формат:
+- кратко, структурирано
+- покажи ефект върху дефицит/дълг/AIC
+- trade-offs
+- ако дефицит >3%: предложи компенсации без вдигане на ставки
 """
-CREST_B64 = base64.b64encode(DEMO_CREST_SVG.encode("utf-8")).decode("utf-8")
 
+# =========================
+# OPENAI
+# =========================
+def get_client():
+    key = st.secrets.get("OPENAI_API_KEY", "")
+    if not key:
+        return None
+    return OpenAI(api_key=key)
 
-# =========================================
-# Header + styles (official look)
-# =========================================
-st.markdown(
-    f"""
-    <style>
-      .gov-header {{
-        border-radius: 14px;
-        overflow: hidden;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-        border: 1px solid rgba(0,0,0,0.06);
-        margin-bottom: 14px;
-        background: #ffffff;
-      }}
-      .flag {{
-        height: 10px;
-        background: linear-gradient(
-            to bottom,
-            #ffffff 0%, #ffffff 33%,
-            #00966E 33%, #00966E 66%,
-            #D62612 66%, #D62612 100%
-        );
-      }}
-      .gov-top {{
-        display: flex;
-        gap: 14px;
-        align-items: center;
-        padding: 14px 16px;
-      }}
-      .crest {{
-        width: 54px;
-        height: 54px;
-        flex: 0 0 54px;
-      }}
-      .gov-title {{
-        line-height: 1.15;
-      }}
-      .gov-title h1 {{
-        margin: 0;
-        font-size: 18px;
-        font-weight: 800;
-        letter-spacing: 0.2px;
-      }}
-      .gov-title p {{
-        margin: 4px 0 0 0;
-        font-size: 13px;
-        color: rgba(0,0,0,0.65);
-      }}
-      .disclaimer {{
-        border-radius: 12px;
-        padding: 10px 12px;
-        background: rgba(214,38,18,0.06);
-        border: 1px solid rgba(214,38,18,0.20);
-        font-size: 13px;
-        margin-bottom: 10px;
-      }}
-      .chip {{
-        display:inline-block;
-        padding: 4px 10px;
-        border-radius: 999px;
-        background: rgba(0,150,110,0.08);
-        border: 1px solid rgba(0,150,110,0.22);
-        font-size: 12px;
-        margin-right: 6px;
-        margin-bottom: 6px;
-      }}
-      .muted {{
-        color: rgba(0,0,0,0.60);
-        font-size: 12px;
-      }}
-    </style>
+MODEL = st.secrets.get("OPENAI_MODEL", "gpt-5.2")
 
-    <div class="gov-header">
-      <div class="flag"></div>
-      <div class="gov-top">
-        <img class="crest" src="data:image/svg+xml;base64,{CREST_B64}" />
-        <div class="gov-title">
-          <h1>Република България — BGGovAI</h1>
-          <p>ИИ съветник за публични политики (демонстрационна версия)</p>
+def ask_ai(system, context):
+    client = get_client()
+    if client is None:
+        return "⚠️ Липсва OPENAI_API_KEY в Streamlit Secrets."
+    try:
+        r = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role":"system","content":system},{"role":"user","content":context}],
+            temperature=0.2
+        )
+        return r.choices[0].message.content
+    except Exception as e:
+        return f"❌ AI грешка: {e}"
+
+# =========================
+# UI HELPERS
+# =========================
+def kpi_card(title, value, subtitle=""):
+    st.markdown(
+        f"""
+        <div class="card">
+          <h4>{title}</h4>
+          <div class="big">{value}</div>
+          <div class="sub">{subtitle}</div>
         </div>
-      </div>
-    </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-    <div class="disclaimer">
-      <b>Внимание:</b> Това е <b>демо прототип</b>. Не е официален държавен портал и не представлява правен/финансов съвет.
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+def mini_card(name, status):
+    st.markdown(
+        f"""
+        <div class="card" style="padding:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+            <div style="font-weight:800;line-height:1.2;">{name}</div>
+            <div style="font-size:20px;">{status}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-
-# =========================================
-# DEMO baseline budget (embedded)
-# (Realistic-ish, but fictive, simplified)
-# =========================================
-def get_demo_budget():
-    inp = {
-        "gdp": 210.0,
-        "debt": 58.0,
-        "aic_bg": 70.0,
-        "aic_eu": 100.0,
-    }
-
-    revenues = [
-        ("VAT (total)", 22.0, "вкл. ставка ресторанти (условно)"),
+# =========================
+# DEMO SCENARIOS
+# =========================
+def get_demo_budget(scenario="DEMO 2025"):
+    base_rev = [
+        ("VAT (total)", 22.0, ""),
         ("Income tax", 10.0, ""),
         ("Corporate tax", 4.0, ""),
         ("Social contributions", 22.0, ""),
@@ -189,8 +214,7 @@ def get_demo_budget():
         ("EU funds & grants", 10.0, ""),
         ("Other revenues", 18.0, ""),
     ]
-
-    expenditures = [
+    base_exp = [
         ("Pensions", 20.0, ""),
         ("Wages (public sector)", 18.0, ""),
         ("Healthcare", 10.0, ""),
@@ -201,346 +225,406 @@ def get_demo_budget():
         ("Interest", 2.0, ""),
         ("Other expenditures", 17.0, ""),
     ]
-
-    rev_df = pd.DataFrame(revenues, columns=["Category", "Amount (bn BGN)", "Notes"])
-    exp_df = pd.DataFrame(expenditures, columns=["Category", "Amount (bn BGN)", "Notes"])
+    scenarios = {
+        "DEMO 2025":     {"gdp": 210.0, "aic_bg": 70.0},
+        "Оптимистичен":  {"gdp": 225.0, "aic_bg": 74.0},
+        "Рецесия":       {"gdp": 190.0, "aic_bg": 67.0},
+        "Шок":           {"gdp": 180.0, "aic_bg": 63.0},
+    }
+    s = scenarios.get(scenario, scenarios["DEMO 2025"])
+    inp = {"gdp": s["gdp"], "debt": 58.0, "aic_bg": s["aic_bg"], "aic_eu": 100.0}
+    rev_df = pd.DataFrame(base_rev, columns=["Category","Amount (bn BGN)","Notes"])
+    exp_df = pd.DataFrame(base_exp, columns=["Category","Amount (bn BGN)","Notes"])
     return inp, rev_df, exp_df
 
+# =========================
+# POLICIES (PACKAGES)
+# =========================
+POLICY_DELTAS = {
+    "VAT_REST_9": {"type":"rev", "cat":"VAT (total)", "delta": -0.6, "label":"ДДС 9% за ресторанти (връщане)"},
+    "PENSIONS_10": {"type":"exp_mult", "cat":"Pensions", "mult": 1.10, "label":"Пенсии +10%"},
+    "INVEST": {"type":"exp_add_multi",
+               "adds":[("Capex (public investment)", 1.0), ("Education", 0.3), ("Healthcare", 0.3)],
+               "label":"Инвестиции (Capex+обр.+здр.)"},
+}
 
-# =========================================
-# Supported topics
-# =========================================
-SUPPORTED = [
-    "ДДС 9% за ресторанти (въздействие върху бюджета)",
-    "Пенсии +10% (въздействие върху разходите)",
-    "Инвестиции (Capex+образование+здраве — сценарий)",
-    "Общ фискален преглед (дефицит/дълг/AIC)",
-    "Закон за българското гражданство (рамка за правен анализ)",
-    "Смяна на МОЛ на ЕООД (административни стъпки и документи)",
-]
+def apply_policies(selected_keys, rev_df, exp_df):
+    notes = []
+    for k in selected_keys:
+        p = POLICY_DELTAS[k]
+        if p["type"] == "rev":
+            rev_df.loc[rev_df["Category"]==p["cat"], "Amount (bn BGN)"] += p["delta"]
+            notes.append(f"{p['label']} → {p['delta']:+.1f} млрд. лв. (≈ {bgn_to_eur(p['delta']):+.2f} млрд. €) (DEMO)")
+        elif p["type"] == "exp_mult":
+            exp_df.loc[exp_df["Category"]==p["cat"], "Amount (bn BGN)"] *= p["mult"]
+            notes.append(f"{p['label']} → x{p['mult']:.2f} върху {p['cat']} (DEMO)")
+        elif p["type"] == "exp_add_multi":
+            for cat, add in p["adds"]:
+                exp_df.loc[exp_df["Category"]==cat, "Amount (bn BGN)"] += add
+            adds_txt = ", ".join([f"{cat} +{add:.1f}" for cat, add in p["adds"]])
+            notes.append(f"{p['label']} → {adds_txt} (млрд. лв., DEMO)")
+    return rev_df, exp_df, notes
 
-st.markdown("### Поддържани теми (демо валидирани)")
-st.markdown(" ".join([f'<span class="chip">{s}</span>' for s in SUPPORTED]), unsafe_allow_html=True)
-
-
-# =========================================
-# UI: question + optional Excel upload
-# =========================================
-st.markdown("### Въпрос към системата")
-q = st.text_area(
-    "Въведи въпрос (можеш и без Excel — ще ползвам вграден DEMO бюджет):",
-    height=90,
-    placeholder="Пример: Какво става ако върнем ДДС 9% за ресторанти?",
-)
-
-uploaded = st.file_uploader("По желание: Качи Excel бюджет (.xlsx)", type=["xlsx"])
-
-with st.expander("Как работи демото без Excel?"):
-    st.write(
-        "Ако не качиш файл, системата използва вграден опростен базов бюджет (DEMO), "
-        "за да демонстрира логиката на анализ и целите (3% дефицит, 60% дълг, AIC догонване, без данъци)."
-    )
-
-GOALS_TEXT = """\
-Цели (демо):
-- Дефицит ≤ 3% от БВП
-- Дълг ≤ 60% от БВП
-- Максимално бързо догонване по AIC (ЕС=100)
-- Без вдигане на данъци
-"""
-
-
-# =========================================
-# Intent classifier
-# =========================================
-def classify(text: str) -> str:
-    t = (text or "").strip().lower()
-
-    if any(k in t for k in ["мол", "управител", "еоод", "търговски регист", "а4", "вписване", "агенция по вписванията"]):
-        return "ADMIN_MOL"
-
-    if any(k in t for k in ["гражданств", "закон за българското гражданство", "натурализ", "изменени", "проект", "чл.", "ал.", "параграф", "§"]):
-        return "LEGAL_CITIZENSHIP"
-
-    if "ддс" in t and any(k in t for k in ["ресторан", "кетър", "хран", "9%","9 %","девет"]):
-        return "FISCAL_VAT_REST"
-
-    if "пенс" in t and any(k in t for k in ["10", "процент", "%", "+10"]):
-        return "FISCAL_PENSIONS"
-
-    if any(k in t for k in ["инвест", "капекс", "инфраструкт", "образован", "здравеопаз", "capex"]):
-        return "FISCAL_INVEST"
-
-    if any(k in t for k in ["дефиц", "дълг", "бюджет", "бвп", "aic", "догон", "маастрихт"]):
-        return "FISCAL_BASE"
-
-    return "GENERAL"
-
-
-# =========================================
-# Admin & legal modules (demo)
-# =========================================
-def answer_admin_mol():
-    st.subheader("Администрация: Смяна на МОЛ (управител) на ЕООД — DEMO чеклист")
-    st.markdown(
-        """
-**Къде:** Търговски регистър (Агенция по вписванията)  
-**Заявление:** обичайно **А4** (промени по обстоятелства)
-
-**Документи (типично):**
-- Решение на едноличния собственик за освобождаване/назначаване на управител
-- Съгласие и образец от подпис (спесимен) на новия управител
-- Декларации по ТЗ/ЗТРРЮЛНЦ (според конкретиката)
-- При електронно подаване: КЕП
-
-**Стъпки:**
-1) Подготвяш решение + декларации + спесимен  
-2) Подаване в ТР (електронно е по-евтино)  
-3) След вписване: уведомяваш банка/контрагенти, актуализираш договори при нужда
-"""
-    )
-    st.caption("Бележка: демо ориентир. Реалният пакет документи зависи от казуса.")
-
-
-def answer_legal_citizenship():
-    st.subheader("Право: Закон за българското гражданство — DEMO рамка за анализ")
-    st.markdown(
-        """
-**Структура за оценка на промяна:**
-1) Точен обхват: кои текстове (чл./ал./§) се променят и как  
-2) Конституционност/съответствие: Конституция, международни ангажименти  
-3) Процедури и изпълнимост: срокове, доказване, капацитет, контрол  
-4) Рискове: неясни дефиниции, обжалвания, конфликт на норми  
-5) Минимизиране: ясни дефиниции, преходни правила, подзаконови актове, ИТ/регистри
-
-За точен анализ: постави текста на предложенията (чл./ал./§).
-"""
-    )
-
-
-# =========================================
-# Excel parsing helpers
-# Expect sheets: Inputs, Revenues, Expenditures
-# =========================================
-def table_to_df(rows, total_keyword="TOTAL"):
-    header = None
-    body = []
-    for r in rows:
-        if r and len(r) >= 2 and r[0] == "Category" and r[1] == "Amount (bn BGN)":
-            header = list(r[:3])
-            continue
-        if header and r and r[0]:
-            body.append(list(r[:3]))
-
-    df = pd.DataFrame(body, columns=header or ["Category", "Amount (bn BGN)", "Notes"])
-    df = df[~df["Category"].astype(str).str.contains(total_keyword, na=False)]
-    df["Amount (bn BGN)"] = pd.to_numeric(df["Amount (bn BGN)"], errors="coerce").fillna(0.0)
-    return df
-
-
-def parse_inputs(rows):
-    vals = {}
-    for r in rows:
-        if not r or not r[0]:
-            continue
-        vals[str(r[0]).strip()] = r[1]
-
-    def getf(k, default=None):
-        v = vals.get(k, default)
-        try:
-            return float(v)
-        except Exception:
-            return default
-
-    return {
-        "gdp": getf("GDP (bn BGN)", None),
-        "debt": getf("Debt stock (bn BGN)", None),
-        "aic_bg": getf("AIC (EU=100) - Bulgaria", 70.0),
-        "aic_eu": getf("AIC (EU=100) - EU average", 100.0),
-    }
-
-
-def traffic(deficit_pct, debt_pct, goal_def=0.03, goal_debt=0.60):
-    def light(val, green_th, yellow_th):
-        if val is None:
-            return "⚪️"
-        if val <= green_th:
-            return "🟩"
-        if val <= yellow_th:
-            return "🟨"
+# =========================
+# KPI + RATING
+# =========================
+def traffic(deficit_pct, debt_pct):
+    def light(v, g, y):
+        if v <= g: return "🟩"
+        if v <= y: return "🟨"
         return "🟥"
+    return light(abs(deficit_pct), 0.03, 0.045), light(debt_pct, 0.60, 0.70)
 
-    f = light(abs(deficit_pct) if deficit_pct is not None else None, goal_def, goal_def * 1.5)
-    d = light(debt_pct, goal_debt, goal_debt + 0.10)
-    return f, d
+def overall_rating(def_light, debt_light):
+    if def_light == "🟥" or debt_light == "🟥":
+        return "🟥 Фискално опасно"
+    if def_light == "🟨" or debt_light == "🟨":
+        return "🟨 Рисково"
+    return "🟩 Устойчиво"
 
+# =========================
+# SCORECARD (DEMO proxies)
+# =========================
+def scorecard(selected, deficit_pct, debt_pct):
+    def_l, debt_l = traffic(deficit_pct, debt_pct)
+    has_invest = "INVEST" in selected
+    has_pens = "PENSIONS_10" in selected
+    has_vatcut = "VAT_REST_9" in selected
 
-# =========================================
-# Run
-# =========================================
-do = st.button("Отговори", use_container_width=True)
-if not do:
+    growth = "🟩" if has_invest else "🟨"
+    infl = "🟨" if (abs(deficit_pct) > 0.03 and (has_pens or has_vatcut)) else "🟩"
+    empl = "🟩" if has_invest else "🟨"
+    ineq = "🟩" if has_pens else "🟨"
+    regional = "🟩" if has_invest else "🟨"
+
+    feas = "🟩"
+    if has_vatcut: feas = "🟨"
+    if has_invest and has_vatcut: feas = "🟨"
+    if has_pens and has_vatcut and has_invest: feas = "🟥"
+
+    return [
+        ("Фискална стабилност (дефицит)", def_l),
+        ("Дълг", debt_l),
+        ("Растеж (proxy)", growth),
+        ("Инфлационен риск (proxy)", infl),
+        ("Заетост (proxy)", empl),
+        ("Неравенство (proxy)", ineq),
+        ("Регионален ефект (proxy)", regional),
+        ("Адм. изпълнимост (proxy)", feas),
+    ]
+
+# =========================
+# COMPENSATION ENGINE (no tax-rate increases)
+# =========================
+def compensation_packages(gdp_bgn, exp_df, deficit_bgn):
+    target_def = 0.03 * gdp_bgn
+    gap = deficit_bgn - target_def
+    if gap <= 0:
+        return []
+
+    capex = float(exp_df.loc[exp_df["Category"]=="Capex (public investment)", "Amount (bn BGN)"].iloc[0])
+    capex_cut = min(gap, max(0.0, capex * 0.25))
+    a_new_def = deficit_bgn - capex_cut
+
+    b_improve = gap * 0.60
+    b_new_def = deficit_bgn - b_improve
+
+    c_rev_gain = gap * 0.50
+    c_spend_save = gap * 0.30
+    c_new_def = deficit_bgn - (c_rev_gain + c_spend_save)
+
+    return gap, [
+        {
+            "name": "Пакет A: Отлагане/етапиране на капекс (без данъци)",
+            "actions": [
+                f"Отлагане/етапиране: {capex_cut:.2f} млрд. лв. (≈ {bgn_to_eur(capex_cut):.2f} млрд. €)",
+                "Фокус: проекти с ниска готовност/бавно усвояване (DEMO логика)",
+            ],
+            "new_def_bgn": a_new_def,
+        },
+        {
+            "name": "Пакет B: Поетапно въвеждане (6–12 месеца) + тавани (без данъци)",
+            "actions": [
+                f"Нетно подобрение ~{b_improve:.2f} млрд. лв. (≈ {bgn_to_eur(b_improve):.2f} млрд. €)",
+                "Фокус: тайминг, условни тригери, контрол на разходи (DEMO логика)",
+            ],
+            "new_def_bgn": b_new_def,
+        },
+        {
+            "name": "Пакет C: Събираемост + ефективност (без вдигане на ставки)",
+            "actions": [
+                f"Подобрена събираемост (ефект): +{c_rev_gain:.2f} млрд. лв. (≈ {bgn_to_eur(c_rev_gain):.2f} млрд. €)",
+                f"Ефективност/пренасочване: -{c_spend_save:.2f} млрд. лв. (≈ {bgn_to_eur(c_spend_save):.2f} млрд. €)",
+            ],
+            "new_def_bgn": c_new_def,
+        },
+    ]
+
+# =========================
+# HEADER
+# =========================
+st.markdown(f"""
+<div class="govbar">
+  <div class="flag"></div>
+  <div class="govtop">
+    <div style="width:46px;height:46px;border-radius:14px;border:1px solid rgba(255,255,255,0.14);
+                background:rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;
+                font-weight:900;">
+      🇧🇬
+    </div>
+    <div style="flex:1;">
+      <div style="font-size:18px;font-weight:900;line-height:1.1;">Република България — BGGovAI</div>
+      <div style="color:rgba(255,255,255,0.70);font-size:13px;margin-top:3px;">
+        ИИ съветник за публични политики • DEMO cockpit
+      </div>
+      <div class="badges" style="margin-top:8px;">
+        <span class="badge">v0.3</span>
+        <span class="badge">данни: DEMO</span>
+        <span class="badge">обновено: {datetime.now().strftime("%d.%m.%Y %H:%M")}</span>
+      </div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# =========================
+# SIDEBAR: inputs (clean UX)
+# =========================
+with st.sidebar:
+    st.markdown("## Настройки")
+    scenario = st.selectbox("Сценарий", ["DEMO 2025","Оптимистичен","Рецесия","Шок"])
+    st.markdown("### Пакет мерки")
+    p_vat = st.checkbox("ДДС 9% за ресторанти (връщане)", value=False)
+    p_pens = st.checkbox("Пенсии +10%", value=False)
+    p_inv = st.checkbox("Инвестиции (Capex+обр.+здр.)", value=False)
+
+    selected = []
+    if p_vat: selected.append("VAT_REST_9")
+    if p_pens: selected.append("PENSIONS_10")
+    if p_inv: selected.append("INVEST")
+
+    st.markdown("### Въпрос")
+    q = st.text_area(
+        "Пиши свободно:",
+        height=110,
+        placeholder="Пример: Как да останем под 3% при тази мярка без вдигане на данъци?"
+    )
+
+    go = st.button("Анализирай", use_container_width=True)
+
+    st.markdown("---")
+    with st.expander("Данъчни параметри (инфо)"):
+        tax_df = pd.DataFrame([
+            ["ДДС стандартна", pct(TAX["VAT_standard"])],
+            ["ДДС намалена", pct(TAX["VAT_reduced"])],
+            ["ДДФЛ", pct(TAX["PIT_flat"])],
+            ["Корпоративен", pct(TAX["CIT_flat"])],
+            ["Дивидент", pct(TAX["DIV_WHT"])],
+            ["Здравно", pct(TAX["HEALTH"])],
+            ["Соц. осигуровки (≈)", pct(TAX["SSC_total_approx"])],
+        ], columns=["Параметър","Ставка"])
+        st.dataframe(tax_df, use_container_width=True, hide_index=True)
+
+# state
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+# layout tabs
+tab1, tab2, tab3, tab4 = st.tabs(["🎛️ Cockpit", "📊 Детайли", "🧾 История", "🧪 Проверка"])
+
+if not go:
+    with tab1:
+        st.markdown("### Готово за демо")
+        st.write("Избери сценарий и мерки вляво, задай въпрос и натисни **Анализирай**.")
+        st.caption("BGGovAI показва последствия: дефицит, дълг, AIC, scorecard, компенсации и AI аргументация.")
     st.stop()
 
-intent = classify(q)
+# =========================
+# Compute baseline + policies
+# =========================
+inp, rev_df, exp_df = get_demo_budget(scenario)
+rev_df, exp_df, notes = apply_policies(selected, rev_df, exp_df)
 
+total_rev_bgn = float(rev_df["Amount (bn BGN)"].sum())
+total_exp_bgn = float(exp_df["Amount (bn BGN)"].sum())
+deficit_bgn = total_exp_bgn - total_rev_bgn
 
-# =========================================
-# Fiscal compute: Excel if present, else DEMO budget
-# =========================================
-def load_budget_from_excel(uploaded_file):
-    wb = load_workbook(filename=BytesIO(uploaded_file.getvalue()), data_only=True)
-    need = {"Inputs", "Revenues", "Expenditures"}
-    if not need.issubset(set(wb.sheetnames)):
-        raise ValueError("Липсват нужни листове: Inputs, Revenues, Expenditures.")
+gdp_bgn = float(inp["gdp"])
+debt_bgn = float(inp["debt"])
+deficit_pct = deficit_bgn / gdp_bgn
+debt_pct = debt_bgn / gdp_bgn
 
-    inp = parse_inputs(list(wb["Inputs"].values))
-    rev_df = table_to_df(list(wb["Revenues"].values), total_keyword="TOTAL")
-    exp_df = table_to_df(list(wb["Expenditures"].values), total_keyword="TOTAL")
-    return inp, rev_df, exp_df
+# Euro view
+total_rev_eur = bgn_to_eur(total_rev_bgn)
+total_exp_eur = bgn_to_eur(total_exp_bgn)
+deficit_eur = bgn_to_eur(deficit_bgn)
+gdp_eur = bgn_to_eur(gdp_bgn)
+debt_eur = bgn_to_eur(debt_bgn)
 
+def_light, debt_light = traffic(deficit_pct, debt_pct)
+rating = overall_rating(def_light, debt_light)
 
-def compute_and_render_fiscal(intent_code: str, source_label: str, inp, rev_df, exp_df):
-    goal_def = 0.03
-    goal_debt = 0.60
+sc = scorecard(selected, deficit_pct, debt_pct)
 
-    gdp = inp["gdp"]
-    debt = inp["debt"]
-    aic_bg = inp["aic_bg"]
-    aic_eu = inp["aic_eu"]
+# tables EUR
+rv = rev_df.copy()
+rv["Amount (bn EUR)"] = rv["Amount (bn BGN)"].apply(bgn_to_eur)
+rv = rv.drop(columns=["Amount (bn BGN)"])
 
-    note = "DEMO: общ фискален преглед (без промяна)."
+ev = exp_df.copy()
+ev["Amount (bn EUR)"] = ev["Amount (bn BGN)"].apply(bgn_to_eur)
+ev = ev.drop(columns=["Amount (bn BGN)"])
 
-    # Simple, controlled scenario changes (demo)
-    if intent_code == "FISCAL_VAT_REST":
-        rev_df.loc[rev_df["Category"] == "VAT (total)", "Amount (bn BGN)"] -= 0.6
-        note = "DEMO сценарий: ДДС 9% за ресторанти → -0.6 млрд. лв. от общ ДДС (условно)."
-    elif intent_code == "FISCAL_PENSIONS":
-        exp_df.loc[exp_df["Category"] == "Pensions", "Amount (bn BGN)"] *= 1.10
-        note = "DEMO сценарий: +10% пенсии → увеличение на разхода (условно)."
-    elif intent_code == "FISCAL_INVEST":
-        exp_df.loc[exp_df["Category"] == "Capex (public investment)", "Amount (bn BGN)"] += 1.0
-        exp_df.loc[exp_df["Category"].isin(["Education", "Healthcare"]), "Amount (bn BGN)"] += 0.3
-        note = "DEMO сценарий: инвестиции → +1.0 млрд капекс и +0.3 млрд образование/здраве (условно)."
+# compensation
+comp = compensation_packages(gdp_bgn, exp_df, deficit_bgn)
+comp_gap, comp_packs = (comp if comp else (0.0, []))
 
-    total_rev = float(rev_df["Amount (bn BGN)"].sum())
-    total_exp = float(exp_df["Amount (bn BGN)"].sum())
-    deficit = total_exp - total_rev
+# history append
+st.session_state.history.append({
+    "Сценарий": scenario,
+    "Мерки": ", ".join([POLICY_DELTAS[k]["label"] for k in selected]) if selected else "(без)",
+    "Дефицит %": f"{deficit_pct*100:.2f}%",
+    "Дълг %": f"{debt_pct*100:.2f}%",
+    "AIC": f"{inp['aic_bg']:.1f}",
+    "Рейтинг": rating
+})
 
-    deficit_pct = (deficit / gdp) if gdp else None
-    debt_pct = (debt / gdp) if (gdp and debt is not None) else None
-
-    st.subheader("Финансов резултат (DEMO)")
-    st.caption(f"Източник на бюджет: **{source_label}**")
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Приходи", f"{total_rev:.1f} млрд. лв.")
-    c2.metric("Разходи", f"{total_exp:.1f} млрд. лв.")
-    c3.metric("Дефицит", f"{deficit:.1f} млрд. лв.")
-    c4.metric("Дефицит (% БВП)", f"{deficit_pct*100:.2f}%" if deficit_pct is not None else "n/a")
-
-    f_light, d_light = traffic(deficit_pct, debt_pct, goal_def=goal_def, goal_debt=goal_debt)
-    st.write(f"Цели: дефицит ≤ 3% и дълг ≤ 60% → Светофар: **Дефицит {f_light} | Дълг {d_light}**")
-    st.info(note)
-
-    gap = None
-    if aic_bg is not None and aic_eu is not None:
-        gap = max(aic_eu - aic_bg, 0.0)
-    st.caption(
-        f"AIC (DEMO): BG={aic_bg:.1f}, EU={aic_eu:.1f}, gap={gap:.1f} пункта"
-        if gap is not None else "AIC (DEMO): n/a"
-    )
-
-    st.divider()
-    left, right = st.columns(2)
-    with left:
-        st.subheader("Приходи (след сценария)")
-        st.dataframe(rev_df, use_container_width=True, hide_index=True)
-    with right:
-        st.subheader("Разходи (след сценария)")
-        st.dataframe(exp_df, use_container_width=True, hide_index=True)
-
-    # AI analysis
-    system = f"""
-Ти си BGGovAI — аналитичен съветник за публични политики на България.
-
-{GOALS_TEXT}
-
-Правила:
-- Отговаряй кратко и структурирано.
-- Ползвай числата от модела (дефицит/дълг/AIC gap).
-- Покажи trade-offs и как се спазват целите.
-- Не измисляй данни, които не са дадени.
+# =========================
+# AI context
+# =========================
+tax_ctx = f"""
+Текущи данъчни параметри (инфо):
+- ДДС стандартна: {pct(TAX['VAT_standard'])}
+- ДДС намалена: {pct(TAX['VAT_reduced'])}
+- ДДФЛ: {pct(TAX['PIT_flat'])}
+- Корпоративен: {pct(TAX['CIT_flat'])}
+- Дивидент (WHT): {pct(TAX['DIV_WHT'])}
+- Здравно: {pct(TAX['HEALTH'])}
+- Соц. осигуровки (общо, индикативно): {pct(TAX['SSC_total_approx'])}
 """
-    context = f"""
-Въпрос от потребителя:
+
+policy_ctx = "Избрани мерки:\n" + ("\n".join([f"- {POLICY_DELTAS[k]['label']}" for k in selected]) if selected else "- няма")
+
+context = f"""
+Сценарий: {scenario}
+{policy_ctx}
+
+Въпрос:
 {q}
 
-Бюджетен източник: {source_label}
+Ключови индикатори (EUR):
+- БВП: {fmt_bn_eur(gdp_eur)}
+- Приходи: {fmt_bn_eur(total_rev_eur)}
+- Разходи: {fmt_bn_eur(total_exp_eur)}
+- Дефицит: {fmt_bn_eur(deficit_eur)} ({deficit_pct*100:.2f}% от БВП)
+- Дълг: {fmt_bn_eur(debt_eur)} ({debt_pct*100:.2f}% от БВП)
+- AIC: BG {inp['aic_bg']:.1f} / EU {inp['aic_eu']:.1f}
 
-Ключови индикатори:
-- Приходи: {total_rev:.1f} млрд. лв.
-- Разходи: {total_exp:.1f} млрд. лв.
-- Дефицит: {deficit:.1f} млрд. лв.
-- Дефицит (% БВП): {(deficit_pct*100):.2f}% (цел ≤ 3%)
-- Дълг (% БВП): {(debt_pct*100):.2f}% (цел ≤ 60%) (ако има данни)
-- AIC BG: {aic_bg:.1f} / AIC EU: {aic_eu:.1f} / Gap: {gap:.1f}
+Светофар: Дефицит {def_light} | Дълг {debt_light}
+Policy Scorecard (DEMO): {", ".join([f"{name}={status}" for name,status in sc])}
 
-Политическо ограничение: без повишение на данъците.
+{tax_ctx}
 """
-    st.divider()
-    st.subheader("AI анализ (real-time)")
-    st.write(ask_ai(system, context))
 
+# =========================
+# TAB 1: Cockpit
+# =========================
+with tab1:
+    st.markdown("### Ключови показатели")
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: kpi_card("БВП", fmt_bn_eur(gdp_eur), f"Сценарий: {scenario}")
+    with c2: kpi_card("Приходи", fmt_bn_eur(total_rev_eur), "Консолидирани (DEMO)")
+    with c3: kpi_card("Разходи", fmt_bn_eur(total_exp_eur), "Консолидирани (DEMO)")
+    with c4: kpi_card("Дефицит", fmt_bn_eur(deficit_eur), f"{deficit_pct*100:.2f}% от БВП (цел ≤3%)")
 
-# =========================================
-# Routing
-# =========================================
-if intent.startswith("FISCAL"):
-    if uploaded:
-        try:
-            inp, rev_df, exp_df = load_budget_from_excel(uploaded)
-            compute_and_render_fiscal(intent, "Качен Excel файл", inp, rev_df, exp_df)
-        except Exception as e:
-            st.error(f"Excel бюджетът не може да се прочете: {e}")
-            st.info("Ще използвам вградения DEMO бюджет вместо това.")
-            inp, rev_df, exp_df = get_demo_budget()
-            compute_and_render_fiscal(intent, "Вграден DEMO бюджет (fallback)", inp, rev_df, exp_df)
+    c5, c6, c7 = st.columns([1.2, 1.2, 1.6])
+    with c5: kpi_card("Дълг", fmt_bn_eur(debt_eur), f"{debt_pct*100:.2f}% от БВП (цел ≤60%)")
+    with c6: kpi_card("AIC", f"{inp['aic_bg']:.1f} / {inp['aic_eu']:.0f}", "BG / EU=100")
+    with c7: kpi_card("Оценка", rating, f"Светофар: Дефицит {def_light} | Дълг {debt_light}")
+
+    if notes:
+        st.markdown("### Избрани мерки (DEMO)")
+        st.markdown("- " + "\n- ".join(notes))
     else:
-        inp, rev_df, exp_df = get_demo_budget()
-        compute_and_render_fiscal(intent, "Вграден DEMO бюджет", inp, rev_df, exp_df)
+        st.markdown("### Избрани мерки (DEMO)")
+        st.caption("Няма избрани мерки. Показан е базовият сценарий.")
 
-elif intent == "ADMIN_MOL":
-    answer_admin_mol()
-    st.divider()
-    st.subheader("AI допълнение (real-time)")
-    system = "Ти си административен консултант. Отговаряй ясно и по стъпки."
-    context = f"Въпрос: {q}\nДай практичен чеклист и документи. Не измисляй несигурни детайли."
-    st.write(ask_ai(system, context))
+    st.markdown("### Policy Scorecard")
+    g1, g2 = st.columns(2)
+    for i, (name, status) in enumerate(sc):
+        with (g1 if i % 2 == 0 else g2):
+            mini_card(name, status)
 
-elif intent == "LEGAL_CITIZENSHIP":
-    answer_legal_citizenship()
-    st.divider()
-    st.subheader("AI допълнение (real-time)")
-    system = "Ти си правен анализатор. Отговаряй структурирано, без да измисляш конкретни членове."
-    context = f"Въпрос: {q}\nДай рамка, рискове, и какви данни/текст липсват за точен анализ."
-    st.write(ask_ai(system, context))
+    st.markdown("### Компенсации без вдигане на ставки")
+    if not comp_packs:
+        st.success("✅ Дефицитът е в рамките на 3% → компенсация не е нужна.")
+    else:
+        st.warning(
+            f"⚠️ Над целта: нужни са ~ **{comp_gap:.2f} млрд. лв.** "
+            f"(≈ **{bgn_to_eur(comp_gap):.2f} млрд. €**) подобрение, за да се върнем под 3%."
+        )
+        for p in comp_packs:
+            new_def_pct = p["new_def_bgn"] / gdp_bgn
+            new_def_eur = bgn_to_eur(p["new_def_bgn"])
+            st.markdown(f"**{p['name']}**")
+            st.write("• " + "\n• ".join(p["actions"]))
+            st.caption(f"Нов дефицит: {fmt_bn_eur(new_def_eur)} ({new_def_pct*100:.2f}% БВП)")
+            st.divider()
 
-else:
-    st.subheader("Общ отговор (real-time AI)")
-    system = f"""
-Ти си BGGovAI — ИИ съветник за публични политики (демо).
-{GOALS_TEXT}
+    st.markdown("### AI анализ (real-time)")
+    st.write(ask_ai(P1, context))
 
-Ограничения:
-- Ако въпросът е фискален и няма Excel — използвай вградения DEMO бюджет (както е в системата).
-- Ако темата е извън демото — кажи какви данни трябват.
-- Не измисляй факти.
+# =========================
+# TAB 2: Details
+# =========================
+with tab2:
+    st.markdown("### Детайлни таблици (EUR)")
+    l, r = st.columns(2)
+    with l:
+        st.markdown("**Приходи**")
+        st.dataframe(rv, use_container_width=True, hide_index=True)
+    with r:
+        st.markdown("**Разходи**")
+        st.dataframe(ev, use_container_width=True, hide_index=True)
+
+    st.markdown("### Контекст (за прозрачност)")
+    st.caption("По-долу е точно какво подаваме към AI (DEMO).")
+    st.code(context)
+
+# =========================
+# TAB 3: History
+# =========================
+with tab3:
+    st.markdown("### История на решенията")
+    hist_df = pd.DataFrame(st.session_state.history)
+    st.dataframe(hist_df, use_container_width=True, hide_index=True)
+
+# =========================
+# TAB 4: Checks
+# =========================
+with tab4:
+    st.markdown("### Мулти-министерски режим")
+    if st.button("Покажи позиции: МФ / МТСП / МИ + компромис", use_container_width=True):
+        multi_context = context + """
+Изискване за формат:
+- Дай 3 секции:
+  1) Позиция на Министерство на финансите (стабилност/дефицит/дълг)
+  2) Позиция на МТСП (социални ефекти/неравенство)
+  3) Позиция на МИ (растеж/инвестиции/продуктивност)
+- После 1 "Компромисен вариант" (макс 5 булета), който спазва целите и НЕ вдига данъчни ставки.
 """
-    context = f"""
-Въпрос: {q}
+        st.write(ask_ai(P1, multi_context))
 
-Поддържани теми в демото:
-- {", ".join(SUPPORTED)}
+    st.markdown("### Проверка на твърдение (anti-spin)")
+    claim = st.text_input("Напиши твърдение (пример: „Тази мярка не увеличава дефицита“)", "")
+    if st.button("Провери твърдението", use_container_width=True) and claim.strip():
+        claim_context = context + f"""
+Твърдение за проверка:
+{claim}
+
+Задача:
+- Дай оценка: ВЯРНО / ЧАСТИЧНО / НЕВЯРНО
+- Обоснови с числата и целите.
+- Ако не може да се провери само с дадените данни — кажи какво липсва.
 """
-    st.write(ask_ai(system, context))
+        st.write(ask_ai(P1, claim_context))
