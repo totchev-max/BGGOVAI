@@ -3,6 +3,34 @@ import pandas as pd
 from io import BytesIO
 from openpyxl import load_workbook
 import base64
+from openai import OpenAI
+
+@st.cache_resource
+def get_client():
+    # Streamlit secrets (препоръчително)
+    key = st.secrets.get("OPENAI_API_KEY", None)
+    if not key:
+        # fallback към env var, ако ползваш локално
+        import os
+        key = os.getenv("OPENAI_API_KEY")
+
+    if not key:
+        return None
+    return OpenAI(api_key=key)
+
+def ask_ai(system_instructions: str, user_input: str, model: str = "gpt-5.2"):
+    client = get_client()
+    if client is None:
+        return "❗ Липсва OPENAI_API_KEY в Streamlit Secrets."
+
+    resp = client.responses.create(
+        model=model,
+        input=[
+            {"role": "developer", "content": system_instructions},
+            {"role": "user", "content": user_input},
+        ],
+    )
+    return resp.output_text
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
