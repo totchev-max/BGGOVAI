@@ -711,4 +711,3 @@ with out3:
         st.dataframe(pd.DataFrame(st.session_state.history), use_container_width=True, hide_index=True)
     else:
         st.info("Няма записани фискални решения още.")
-```0
