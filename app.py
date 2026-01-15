@@ -1,42 +1,57 @@
 import base64
-import os
 from io import BytesIO
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
 
 
-# =========================
+# =========================================
 # Page config
-# =========================
+# =========================================
 st.set_page_config(
     page_title="Република България — BGGovAI (DEMO)",
     layout="wide",
 )
 
 
-# =========================
-# Optional: OpenAI (real-time AI)
-# Works with openai>=1.x, and falls back gracefully if missing.
-# =========================
-def ask_ai(system: str, context: str) -> str:
+# =========================================
+# OpenAI (openai>=1.0.0) — real-time AI
+# =========================================
+@st.cache_resource
+def get_openai_client():
     """
-    Calls OpenAI if OPENAI_API_KEY is set in Streamlit Secrets.
-    Falls back to a safe local message if unavailable.
+    Returns an OpenAI client if OPENAI_API_KEY is set in Streamlit Secrets.
+    Works with openai>=1.0.0.
     """
-    api_key = None
     try:
         api_key = st.secrets.get("OPENAI_API_KEY", None)
     except Exception:
         api_key = None
 
     if not api_key:
+        return None
+
+    try:
+        from openai import OpenAI  # openai>=1.0.0
+        return OpenAI(api_key=api_key)
+    except Exception:
+        return None
+
+
+def ask_ai(system: str, context: str) -> str:
+    """
+    Calls OpenAI chat.completions via the new SDK.
+    Returns a readable error instead of crashing.
+    """
+    client = get_openai_client()
+    if client is None:
         return (
-            "⚠️ Няма зададен OPENAI_API_KEY в Streamlit Secrets.\n\n"
-            "Демото работи и без AI, но за *real-time* анализ добави ключ:\n"
-            "Manage app → Settings → Secrets → OPENAI_API_KEY = \"...\""
+            "⚠️ AI не е активен.\n\n"
+            "Провери:\n"
+            "1) Streamlit → Manage app → Settings → Secrets\n"
+            "   OPENAI_API_KEY = \"sk-...\"\n"
+            "2) requirements.txt да има: openai>=1.0.0\n"
         )
 
     model = None
@@ -45,10 +60,7 @@ def ask_ai(system: str, context: str) -> str:
     except Exception:
         model = "gpt-4o-mini"
 
-    # Try OpenAI v1.x client
     try:
-        from openai import OpenAI  # type: ignore
-        client = OpenAI(api_key=api_key)
         resp = client.chat.completions.create(
             model=model,
             messages=[
@@ -57,39 +69,21 @@ def ask_ai(system: str, context: str) -> str:
             ],
             temperature=0.2,
         )
-        return resp.choices[0].message.content
-    except Exception:
-        # Fallback to legacy openai (pre-1.0)
-        try:
-            import openai  # type: ignore
-
-            openai.api_key = api_key
-            resp = openai.ChatCompletion.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": context},
-                ],
-                temperature=0.2,
-            )
-            return resp["choices"][0]["message"]["content"]
-        except Exception as e:
-            return (
-                "❌ AI повикването не мина.\n\n"
-                "Най-честите причини:\n"
-                "• Липсва `openai` в requirements.txt\n"
-                "• Грешен/невалиден ключ\n"
-                "• Моделът в OPENAI_MODEL не е достъпен\n\n"
-                f"Технически детайл: {e}"
-            )
+        return resp.choices[0].message.content or ""
+    except Exception as e:
+        return (
+            "❌ AI повикването не мина.\n\n"
+            "Най-честите причини:\n"
+            "• Грешен/невалиден ключ\n"
+            "• Моделът в OPENAI_MODEL не е достъпен\n"
+            "• Временен проблем/лимит\n\n"
+            f"Технически детайл: {e}"
+        )
 
 
-# =========================
-# Assets: crest (demo)
-# Avoid FileNotFoundError by embedding a fallback SVG.
-# =========================
-ASSETS_DIR = Path(__file__).parent / "assets"
-
+# =========================================
+# Inline demo crest (no assets needed)
+# =========================================
 DEMO_CREST_SVG = """\
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
   <defs>
@@ -108,25 +102,12 @@ DEMO_CREST_SVG = """\
   </text>
 </svg>
 """
-
-def b64_bytes(data: bytes) -> str:
-    return base64.b64encode(data).decode("utf-8")
-
-def load_crest_b64() -> str:
-    crest_path = ASSETS_DIR / "crest_demo.svg"
-    if crest_path.exists():
-        try:
-            return b64_bytes(crest_path.read_bytes())
-        except Exception:
-            pass
-    return b64_bytes(DEMO_CREST_SVG.encode("utf-8"))
-
-CREST_B64 = load_crest_b64()
+CREST_B64 = base64.b64encode(DEMO_CREST_SVG.encode("utf-8")).decode("utf-8")
 
 
-# =========================
-# UI Header (official-style)
-# =========================
+# =========================================
+# Header + styles (official look)
+# =========================================
 st.markdown(
     f"""
     <style>
@@ -190,16 +171,6 @@ st.markdown(
         margin-right: 6px;
         margin-bottom: 6px;
       }}
-      .muted {{
-        color: rgba(0,0,0,0.60);
-        font-size: 12px;
-      }}
-      .box {{
-        border: 1px solid rgba(0,0,0,0.08);
-        border-radius: 14px;
-        padding: 12px 12px;
-        background: #fff;
-      }}
     </style>
 
     <div class="gov-header">
@@ -222,9 +193,9 @@ st.markdown(
 )
 
 
-# =========================
-# Supported topics (demo)
-# =========================
+# =========================================
+# Supported topics (validated demo prompts)
+# =========================================
 SUPPORTED = [
     "ДДС 9% за ресторанти (въздействие върху бюджета)",
     "Пенсии +10% (въздействие върху разходите)",
@@ -236,12 +207,11 @@ SUPPORTED = [
 
 st.markdown("### Поддържани теми (демо валидирани)")
 st.markdown(" ".join([f'<span class="chip">{s}</span>' for s in SUPPORTED]), unsafe_allow_html=True)
-st.caption("Пиши свободно — системата ще разпознае темата и ще извади анализ.")
 
 
-# =========================
-# Inputs: question + optional Excel
-# =========================
+# =========================================
+# UI: question + Excel upload
+# =========================================
 st.markdown("### Въпрос към системата")
 q = st.text_area(
     "Въведи въпрос (за фискални въпроси прикачи Excel бюджета):",
@@ -252,9 +222,21 @@ q = st.text_area(
 uploaded = st.file_uploader("Качи Excel бюджет (.xlsx)", type=["xlsx"])
 
 
-# =========================
+# =========================================
+# Goals (fixed by you)
+# =========================================
+GOALS_TEXT = """\
+Цели (демо):
+- Дефицит ≤ 3% от БВП
+- Дълг ≤ 60% от БВП
+- Максимално бързо догонване по AIC (ЕС=100)
+- Без вдигане на данъци
+"""
+
+
+# =========================================
 # Intent classifier
-# =========================
+# =========================================
 def classify(text: str) -> str:
     t = (text or "").strip().lower()
 
@@ -264,7 +246,6 @@ def classify(text: str) -> str:
     if any(k in t for k in ["гражданств", "закон за българското гражданство", "натурализ", "изменени", "проект", "чл.", "ал.", "параграф", "§"]):
         return "LEGAL_CITIZENSHIP"
 
-    # VAT restaurants
     if "ддс" in t and any(k in t for k in ["ресторан", "кетър", "хран", "9%","9 %","девет"]):
         return "FISCAL_VAT_REST"
 
@@ -277,13 +258,12 @@ def classify(text: str) -> str:
     if any(k in t for k in ["дефиц", "дълг", "бюджет", "бвп", "aic", "догон", "маастрихт"]):
         return "FISCAL_BASE"
 
-    # If unclear, still try: legal/admin keywords first; else default to GENERAL
     return "GENERAL"
 
 
-# =========================
-# Admin & legal answers (demo)
-# =========================
+# =========================================
+# Admin & legal modules (demo)
+# =========================================
 def answer_admin_mol():
     st.subheader("Администрация: Смяна на МОЛ (управител) на ЕООД — DEMO чеклист")
     st.markdown(
@@ -293,42 +273,39 @@ def answer_admin_mol():
 
 **Документи (типично):**
 - Решение на едноличния собственик за освобождаване/назначаване на управител
-- Съгласие и образец от подпис (спесимен) на новия управител *(често с нотариална заверка — зависи от практиката/случая)*
-- Декларации по ТЗ/ЗТРРЮЛНЦ (според конкретиката и заявителя)
-- При електронно подаване: КЕП (квалифициран електронен подпис)
+- Съгласие и образец от подпис (спесимен) на новия управител
+- Декларации по ТЗ/ЗТРРЮЛНЦ (според конкретиката)
+- При електронно подаване: КЕП
 
 **Стъпки:**
 1) Подготвяш решение + декларации + спесимен  
 2) Подаване в ТР (електронно е по-евтино)  
-3) След вписване: уведомяваш банка/контрагенти, актуализираш договори/пълномощни при нужда
+3) След вписване: уведомяваш банка/контрагенти, актуализираш договори при нужда
 """
     )
-    st.caption("Бележка: демо ориентир. Реалният пакет документи зависи от конкретния казус и изискванията за заверки.")
+    st.caption("Бележка: демо ориентир. Реалният пакет документи зависи от казуса и изискванията за заверки.")
 
 
 def answer_legal_citizenship():
     st.subheader("Право: Закон за българското гражданство — DEMO рамка за анализ")
     st.markdown(
         """
-**Как да оцениш предложение за промяна (структура за анализ):**
+**Как да оцениш предложение за промяна (структура):**
 1) **Точен обхват**: кои текстове (чл./ал./§) се променят и как  
-2) **Конституционност / съответствие**: с Конституция, международни договори, принципи на правовата държава  
-3) **Процедури и изпълнимост**: срокове, доказване на условия, натоварване на администрацията, контрол  
-4) **Рискове**: неясни дефиниции, широко усмотрение, обжалвания, конфликт на норми, празноти в преходни разпоредби  
-5) **Мерки за минимизиране**: ясни дефиниции, преходни правила, подзаконови актове, ИТ/регистрови промени, стандарти за доказване
+2) **Конституционност / съответствие**: Конституция, международни ангажименти, правова държава  
+3) **Процедури и изпълнимост**: срокове, доказване, натоварване на администрацията, контрол  
+4) **Рискове**: неясни дефиниции, обжалвания, конфликт на норми, преходни режими  
+5) **Минимизиране на риска**: ясни дефиниции, преходни правила, подзаконови актове, ИТ/регистри
 
-Ако искаш **точен правен анализ**, копирай тук текста на предложението (или конкретните членове) и ще маркирам:
-- какво реално се променя
-- потенциални противоречия/рискове
-- практически ефект върху процедурата
+За точен анализ: постави текста на конкретните предложения (чл./ал./§) и ще маркирам последствия/рискове.
 """
     )
 
 
-# =========================
+# =========================================
 # Excel parsing helpers
 # Expect sheets: Inputs, Revenues, Expenditures
-# =========================
+# =========================================
 def table_to_df(rows, total_keyword="TOTAL"):
     header = None
     body = []
@@ -338,6 +315,7 @@ def table_to_df(rows, total_keyword="TOTAL"):
             continue
         if header and r and r[0]:
             body.append(list(r[:3]))
+
     df = pd.DataFrame(body, columns=header or ["Category", "Amount (bn BGN)", "Notes"])
     df = df[~df["Category"].astype(str).str.contains(total_keyword, na=False)]
     df["Amount (bn BGN)"] = pd.to_numeric(df["Amount (bn BGN)"], errors="coerce").fillna(0.0)
@@ -381,32 +359,19 @@ def traffic(deficit_pct, debt_pct, goal_def=0.03, goal_debt=0.60):
     return f, d
 
 
-# =========================
-# Run button
-# =========================
+# =========================================
+# Run
+# =========================================
 do = st.button("Отговори", use_container_width=True)
-
 if not do:
     st.stop()
 
 intent = classify(q)
 
 
-# =========================
-# General: if unclear, still answer using AI (no Excel required)
-# =========================
-GOALS_TEXT = """\
-Цели (демо):
-- Дефицит ≤ 3% от БВП (Маастрихт)
-- Дълг ≤ 60% от БВП (Маастрихт)
-- Максимално бързо догонване по AIC (ЕС=100)
-- Без вдигане на данъци (като политическо ограничение)
-"""
-
-
-# =========================
-# Fiscal block requires Excel
-# =========================
+# =========================================
+# Fiscal branch: requires Excel
+# =========================================
 if intent.startswith("FISCAL"):
     if not uploaded:
         st.warning("За финансовите въпроси първо качи Excel бюджета (.xlsx).")
@@ -430,18 +395,14 @@ if intent.startswith("FISCAL"):
     goal_def = 0.03
     goal_debt = 0.60
 
-    # Apply demo scenario deltas (intentionally simple / fictive)
+    # Demo scenario deltas (fictive, simplified)
     note = "DEMO: общ фискален преглед (без промяна)."
-
     if intent == "FISCAL_VAT_REST":
-        # Example: reduce VAT revenue by fictive 0.6 bn
         rev_df.loc[rev_df["Category"] == "VAT (total)", "Amount (bn BGN)"] -= 0.6
         note = "DEMO сценарий: ДДС 9% за ресторанти → -0.6 млрд. лв. от общ ДДС (условно)."
-
     elif intent == "FISCAL_PENSIONS":
         exp_df.loc[exp_df["Category"] == "Pensions", "Amount (bn BGN)"] *= 1.10
         note = "DEMO сценарий: +10% пенсии → увеличение на разхода (условно)."
-
     elif intent == "FISCAL_INVEST":
         exp_df.loc[exp_df["Category"] == "Capex (public investment)", "Amount (bn BGN)"] += 1.0
         exp_df.loc[exp_df["Category"].isin(["Education", "Healthcare"]), "Amount (bn BGN)"] += 0.3
@@ -455,20 +416,21 @@ if intent.startswith("FISCAL"):
     debt_pct = (debt / gdp) if (gdp and debt is not None) else None
 
     st.subheader("Финансов резултат (DEMO)")
-    a, b, c, d = st.columns(4)
-    a.metric("Приходи", f"{total_rev:.1f} млрд. лв.")
-    b.metric("Разходи", f"{total_exp:.1f} млрд. лв.")
-    c.metric("Дефицит", f"{deficit:.1f} млрд. лв.")
-    d.metric("Дефицит (% БВП)", f"{deficit_pct*100:.2f}%" if deficit_pct is not None else "n/a")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Приходи", f"{total_rev:.1f} млрд. лв.")
+    c2.metric("Разходи", f"{total_exp:.1f} млрд. лв.")
+    c3.metric("Дефицит", f"{deficit:.1f} млрд. лв.")
+    c4.metric("Дефицит (% БВП)", f"{deficit_pct*100:.2f}%" if deficit_pct is not None else "n/a")
 
     f_light, d_light = traffic(deficit_pct, debt_pct, goal_def=goal_def, goal_debt=goal_debt)
     st.write(f"Цели: дефицит ≤ 3% и дълг ≤ 60% → Светофар: **Дефицит {f_light} | Дълг {d_light}**")
     st.info(note)
 
-    gap = max(aic_eu - aic_bg, 0) if (aic_eu is not None and aic_bg is not None) else None
+    gap = None
+    if aic_bg is not None and aic_eu is not None:
+        gap = max(aic_eu - aic_bg, 0.0)
     st.caption(
-        f"AIC (DEMO): BG={aic_bg:.1f}, EU={aic_eu:.1f}, gap={gap:.1f} пункта"
-        if gap is not None else "AIC (DEMO): n/a"
+        f"AIC (DEMO): BG={aic_bg:.1f}, EU={aic_eu:.1f}, gap={gap:.1f} пункта" if gap is not None else "AIC (DEMO): n/a"
     )
 
     st.divider()
@@ -480,14 +442,14 @@ if intent.startswith("FISCAL"):
         st.subheader("Разходи (след сценария)")
         st.dataframe(exp_df, use_container_width=True, hide_index=True)
 
-    # ---- AI analysis (real-time) using computed KPIs + user question
+    # ---- Real-time AI analysis
     system = f"""
 Ти си BGGovAI — аналитичен съветник за публични политики на България.
 
 {GOALS_TEXT}
 
 Правила:
-- Отговаряй кратко, структурирано и прагматично.
+- Отговаряй кратко и структурирано.
 - Ползвай числата от модела (дефицит/дълг/AIC gap).
 - Покажи trade-offs и как се спазват целите.
 - Не измисляй данни, които не са дадени.
@@ -501,39 +463,39 @@ if intent.startswith("FISCAL"):
 - Приходи: {total_rev:.1f} млрд. лв.
 - Разходи: {total_exp:.1f} млрд. лв.
 - Дефицит: {deficit:.1f} млрд. лв.
-- Дефицит (% БВП): {deficit_pct*100:.2f}%  (цел ≤ 3%)
-- Дълг (% БВП): {(debt_pct*100):.2f}%  (цел ≤ 60%)  (ако има данни)
+- Дефицит (% БВП): {(deficit_pct*100):.2f}% (цел ≤ 3%)
+- Дълг (% БВП): {(debt_pct*100):.2f}% (цел ≤ 60%)  (ако има данни)
 - AIC BG: {aic_bg:.1f} / AIC EU: {aic_eu:.1f} / Gap: {gap:.1f}
 
-Политическо ограничение (демо): без повишаване на данъците.
+Политическо ограничение: без повишение на данъците.
 """
 
     st.divider()
     st.subheader("AI анализ (real-time)")
     st.write(ask_ai(system, context))
-    st.caption("Ако искаш друг модел: в Secrets добави OPENAI_MODEL=\"...\" (пример: gpt-4o-mini).")
+    st.caption("По желание можеш да зададеш модел в Secrets: OPENAI_MODEL=\"gpt-4o-mini\"")
 
 
+# =========================================
+# Admin / Legal branches + AI add-on
+# =========================================
 elif intent == "ADMIN_MOL":
     answer_admin_mol()
     st.divider()
-    st.subheader("AI допълнение (по желание, real-time)")
-    system = f"Ти си административен консултант. {GOALS_TEXT}\nОтговаряй ясно и по стъпки."
-    context = f"Въпрос: {q}\nДай практичен чеклист и какви документи трябват."
+    st.subheader("AI допълнение (real-time)")
+    system = "Ти си административен консултант. Отговаряй ясно и по стъпки."
+    context = f"Въпрос: {q}\nДай практичен чеклист и документи. Не измисляй несигурни детайли."
     st.write(ask_ai(system, context))
-
 
 elif intent == "LEGAL_CITIZENSHIP":
     answer_legal_citizenship()
     st.divider()
-    st.subheader("AI допълнение (по желание, real-time)")
+    st.subheader("AI допълнение (real-time)")
     system = "Ти си правен анализатор. Отговаряй структурирано, без да измисляш конкретни членове."
     context = f"Въпрос: {q}\nДай рамка, рискове, и какви данни/текст липсват за точен анализ."
     st.write(ask_ai(system, context))
 
-
 else:
-    # GENERAL: real-time AI chat with guardrails + mention supported topics
     st.subheader("Общ отговор (real-time AI)")
     system = f"""
 Ти си BGGovAI — ИИ съветник за публични политики (демо).
@@ -541,13 +503,13 @@ else:
 
 Ограничения:
 - Ако въпросът е фискален и няма Excel — кажи, че липсва бюджет.
-- Ако темата е извън демото — предложи какви данни трябват.
+- Ако темата е извън демото — кажи какви данни трябват.
 - Не измисляй факти.
 """
     context = f"""
 Въпрос: {q}
 
-Поддържани теми в демото (за ориентация):
+Поддържани теми в демото:
 - {", ".join(SUPPORTED)}
 """
     st.write(ask_ai(system, context))
